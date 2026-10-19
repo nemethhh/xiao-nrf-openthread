@@ -22,7 +22,8 @@ Measured facts about the boards and links. Newest entries at the bottom of each 
   survives reflash and reset. A node with a stored network autostarts, which swallows a lone
   `ot factoryreset`, so `OtCli.factory_reset` re-sends until the node reports `disabled`.
 - Antenna switch measured electrically (GPIO P2 OUT `0x50050404` over SWD; RF switch control is P2.5, bit 5):
-  - internal build: P2 OUT = `0x108`, bit 5 low (U.FL not selected).
-  - external build: bit 5 high, asserted in `test_external_antenna_build` (raw value not recorded).
+  - internal build: P2 OUT = `0x108`, P2 DIR = `0x128`: bit 5 is an output and low (U.FL not selected).
+  - external build: P2 OUT = `0x128`, P2 DIR = `0x128`: bit 5 is an output and high (U.FL selected).
+  - OUT alone is not proof (low is the reset value), so the tests also assert DIR bit 5 (0x50050414) is set.
   This backs the "never silently the wrong antenna" anti-goal: the banner and the pin agree for both builds.
 - Power-loss persistence (USB unplug 10 s): PENDING, needs a human; see `docs/checklist.md`.

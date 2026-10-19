@@ -27,16 +27,22 @@ def reset_board(name: str) -> None:
 
 
 P2_OUT = 0x50050404
+P2_IN = 0x50050410
+P2_DIR = 0x50050414
+
+
+def read_gpio_p2(name: str, reg: int = P2_OUT) -> int:
+    """Read a GPIO P2 register over SWD (the running CPU is not halted)."""
+    board = fw.BOARDS[name]
+    argv = fw._openocd(board, f"mdw {reg:#x}")
+    out = subprocess.run(argv, capture_output=True, text=True, check=True, env={**os.environ, **fw.flash_env(board)})
+    m = re.search(rf"{reg:#x}: ([0-9a-f]{{8}})", out.stdout + out.stderr)
+    assert m, out.stdout + out.stderr
+    return int(m.group(1), 16)
 
 
 def read_gpio_p2_out(name: str) -> int:
-    """Read GPIO P2 OUT over SWD (the running CPU is not halted)."""
-    board = fw.BOARDS[name]
-    argv = fw._openocd(board, f"mdw {P2_OUT:#x}")
-    out = subprocess.run(argv, capture_output=True, text=True, check=True, env={**os.environ, **fw.flash_env(board)})
-    m = re.search(rf"{P2_OUT:#x}: ([0-9a-f]{{8}})", out.stdout + out.stderr)
-    assert m, out.stdout + out.stderr
-    return int(m.group(1), 16)
+    return read_gpio_p2(name, P2_OUT)
 
 
 def form_network(cli: OtCli, name: str) -> str:
@@ -49,9 +55,11 @@ def form_network(cli: OtCli, name: str) -> str:
 
 def _cli(board: str):
     cli = OtCli(fw.BOARDS[board].serial_port)
-    cli.factory_reset()
-    yield cli
-    cli.close()
+    try:
+        cli.factory_reset()
+        yield cli
+    finally:
+        cli.close()
 
 
 @pytest.fixture
