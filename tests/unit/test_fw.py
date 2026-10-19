@@ -54,6 +54,9 @@ def test_flash_cmd_dk_uses_jlink():
     argv = flash_cmd(BOARDS["dk"], Path("x.hex"))
     assert flash_env(BOARDS["dk"])["OPENOCD_INTERFACE"] == "jlink"
     assert "adapter serial 001057713759" in argv
+    # 1 MHz makes the J-Link OB drop memory writes mid-image; the XIAO CMSIS-DAP is unaffected.
+    assert argv.index("adapter speed 500") < argv.index("init")
+    assert "adapter speed 500" not in flash_cmd(BOARDS["xiao54"], Path("x.hex"))
 
 
 def test_flash_cmd_erase_range():

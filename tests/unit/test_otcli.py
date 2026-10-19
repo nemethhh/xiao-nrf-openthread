@@ -111,3 +111,14 @@ def test_factory_reset_retries_when_first_request_is_lost():
     cli.factory_reset()
     assert fake.resets == 2
     assert fake.state == "disabled"
+
+
+def test_cmd_strips_prompt_reprinted_inside_async_output():
+    # The shell redraws its prompt around asynchronous output such as `ot ping` replies.
+    cli = cli_with({
+        "ot ping x": "ot ping x\r\n"
+        "16 bytes from uart:~$ fd00::1uart:~$ : icmp_seq=1\r\n"
+        "1 packets transmitted, 1 packets received.uart:~$ \r\n"
+        "Doneuart:~$ \r\n"
+    })
+    assert cli.cmd("ping x") == ["16 bytes from fd00::1: icmp_seq=1", "1 packets transmitted, 1 packets received."]

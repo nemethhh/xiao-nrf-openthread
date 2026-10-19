@@ -9,7 +9,7 @@ from typing import Callable
 import serial
 
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
-PROMPT = re.compile(r"^(uart:~\$ ?)+")
+PROMPT = re.compile(r"uart:~\$ ?")  # also redrawn mid-line around asynchronous output
 LOG_LINE = re.compile(r"^\[\d\d:\d\d:\d\d\.\d{3},\d{3}\] <\w+>")
 ERROR = re.compile(r"^Error (\d+): (.*)$")
 

@@ -53,7 +53,7 @@ BOARDS: dict[str, Board] = {
         "cmsis-dap",
         "AA2C939D",
     ),
-    "dk": Board("dk", "/dev/serial/by-id/usb-SEGGER_J-Link_001057713759-if00", "jlink", "001057713759"),
+    "dk": Board("dk", "/dev/serial/by-id/usb-SEGGER_J-Link_001057713759-if02", "jlink", "001057713759"),
     "xiao52": Board("xiao52", "", "uf2", None),
 }
 
@@ -129,7 +129,8 @@ def _openocd(board: Board, *commands: str) -> list[str]:
     if board.probe == "uf2":
         raise ValueError(f"{board.name} has no debug probe; it is flashed over UF2")
     argv = ["openocd", "-s", str(OPENOCD_SUPPORT), "-f", "openocd.cfg"]
-    for c in (f"adapter serial {board.probe_serial}", "init", *commands, "shutdown"):
+    speed = ["adapter speed 500"] if board.probe == "jlink" else []
+    for c in (f"adapter serial {board.probe_serial}", *speed, "init", *commands, "shutdown"):
         argv += ["-c", c]
     return argv
 
