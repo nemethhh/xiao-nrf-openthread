@@ -4,7 +4,7 @@ Steps that need a human at the desk. Record results in `docs/hardware-notes.md`.
 
 ## Power-loss persistence (router)
 
-Status: PENDING (needs a physical USB unplug).
+Status: PENDING (needs a physical USB unplug). Applies only if the XIAO is reflashed as a standalone router: it now runs `rcp-xiao54` on the Home Assistant host.
 
 1. Flash `router-xiao54`: `python -m tools.fw build router-xiao54 && python -m tools.fw flash router-xiao54`.
 2. Open the serial port and form a network as `tests/hw/test_router.py::test_forms_network_and_becomes_leader` does
@@ -43,27 +43,33 @@ reset on the XIAO nRF52840, then `python -m tools.fw flash rcp-xiao52`. Untested
 
 ## Move XIAO to Home Assistant
 
-Status: PENDING (needs the XIAO's USB cable moved by hand; completes Tasks 8-10).
+Status: DONE 2026-10-19 except the add-on restart checks, which stay PENDING (see below).
+
+Done 2026-10-19: steps 1-5 and the non-restart part of step 6. The agent cannot run `ha_setup --apply` itself (its permission
+classifier blocks the HA write); the user runs HA writes from their own terminal. Results: `docs/hardware-notes.md`, "Home Assistant border router (2026-10-19)".
+
+PENDING (run by the user; restarts the add-on once per restart test, `test_otbr_survives_addon_restart` and `test_dk_reattaches_after_addon_restart` skip without it):
+`HA_ALLOW_RESTART=1 .venv/bin/pytest -m ha -v`
 
 The XIAO is flashed with `rcp-xiao54` at 460800 baud (soak passed 700/700 twice). Do not reflash it. The OTBR add-on
 `core_openthread_border_router` 3.3.0 is already installed (stopped). Everything below is tooling that is already written
 and unit-tested; the steps only need the board moved. `ha_token` must be in the repo root.
 
-1. Unplug the XIAO from this PC and plug it into the Home Assistant host.
-2. `.venv/bin/python -m tools.ha find-xiao` — diffs HA's serial devices against the recorded baseline
+1. DONE 2026-10-19. Unplug the XIAO from this PC and plug it into the Home Assistant host.
+2. DONE 2026-10-19. `.venv/bin/python -m tools.ha find-xiao` — diffs HA's serial devices against the recorded baseline
    (`HA_SERIAL_BASELINE` in `tools/ha.py`: no by-id entries before plugging) and prints the single new `XIAO_nrf54` path;
    exit 1 on zero or several = stop and investigate, do not guess. If the path differs from `XIAO_HA_DEVICE`, set that
    constant in `tools/ha.py` (`ha_setup --apply` refuses while they differ). Record the confirmed path in `docs/hardware-notes.md`.
-3. `.venv/bin/python -m tools.ha_setup` — dry run (read-only). Expect "device ... visible", options to be written
+3. DONE 2026-10-19. `.venv/bin/python -m tools.ha_setup` — dry run (read-only). Expect "device ... visible", options to be written
    (`flow_control: true`, baudrate 460800, nat64 and firewall on), then start.
-4. `.venv/bin/python -m tools.ha_setup --apply` — writes: options, start, confirm otbr then thread discovery flows, wait for a
+4. DONE 2026-10-19. `.venv/bin/python -m tools.ha_setup --apply` — writes: options, start, confirm otbr then thread discovery flows, wait for a
    dataset, mark it preferred (refuses with a message if a non-OTBR dataset is already preferred: ask which network should win).
    Safe to run twice.
-5. `.venv/bin/pytest -m "ha and not hw" -v` — border-router tests (the restart test skips without `HA_ALLOW_RESTART=1`).
-6. `HA_ALLOW_RESTART=1 .venv/bin/pytest -m "ha and hw" tests/ha/test_end_to_end.py -v` — DK joins HA's network, gets an OMR
+5. DONE 2026-10-19. `.venv/bin/pytest -m "ha and not hw" -v` — border-router tests (the restart test skips without `HA_ALLOW_RESTART=1`).
+6. DONE 2026-10-19 for join, OMR address and NAT64 ping (45 s); restart reattach PENDING (see above). `HA_ALLOW_RESTART=1 .venv/bin/pytest -m "ha and hw" tests/ha/test_end_to_end.py -v` — DK joins HA's network, gets an OMR
    address, pings this PC's IPv4 via NAT64, and reattaches after an add-on restart. Setting `HA_ALLOW_RESTART=1` is the permission
    to restart the add-on. If the PC firewall drops ICMP, open it temporarily and close it afterwards.
-7. Record results and the date in `docs/hardware-notes.md`.
+7. DONE 2026-10-19. Record results and the date in `docs/hardware-notes.md`.
 
 If the add-on log (Settings > Add-ons > OpenThread Border Router > Log) shows Spinel / RCP init errors
 (`Failed to initialize ... spinel`, `RCP is not responding`, timeouts after `otbr-agent` starts):

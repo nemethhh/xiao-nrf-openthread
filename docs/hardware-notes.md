@@ -99,3 +99,16 @@ Measured facts about the boards and links. Newest entries at the bottom of each 
 - Add-on `core_openthread_border_router` 3.3.0 (latest 3.3.0) is **already installed**, state `stopped`, boot `auto`; options currently:
   `device: null`, `baudrate: "460800"`, `flow_control: true`, `otbr_log_level: notice`, `firewall: true`, `nat64: false`, `beta: false`.
 - `thread/list_datasets` -> `unknown_command` (thread integration not loaded).
+
+## Home Assistant border router (2026-10-19)
+- The XIAO nRF54L15 (RCP firmware, 460800 baud) now sits on the HA host. `python -m tools.ha find-xiao` found exactly one new device:
+  `/dev/serial/by-id/usb-Seeed_Studio_Seeed_Studio_XIAO_nrf54_CMSIS-DAP_AA2C939D-if02`, identical to the predicted `XIAO_HA_DEVICE`.
+- The user ran `.venv/bin/python -m tools.ha_setup --apply` from their own terminal (the agent's permission classifier blocks this HA write):
+  "OTBR set up: add-on started, flows confirmed, preferred dataset set". Options: baudrate "460800", flow_control true, nat64 true,
+  firewall true, otbr_log_level notice. `flow_control: true` works on HA OS (confirms the DTR ruling on the HA kernel).
+- Add-on `core_openthread_border_router` 3.3.0: state started. Preferred dataset: network `ha-thread-a98e`, channel 15, source otbr.
+- `pytest -m "ha and not hw" -v`: test_xiao_visible_on_ha, test_otbr_addon_running_with_xiao, test_thread_dataset_preferred PASSED;
+  test_otbr_survives_addon_restart SKIPPED (needs HA_ALLOW_RESTART=1).
+- `pytest -m "ha and hw" tests/ha/test_end_to_end.py -v`: test_dk_joins_ha_network, test_dk_has_omr_address,
+  test_dk_pings_lan_ipv4_via_nat64 PASSED (45 s); test_dk_reattaches_after_addon_restart SKIPPED (needs HA_ALLOW_RESTART=1).
+- Sniffer verified separately (see commit b070e30). Restart checks remain: `HA_ALLOW_RESTART=1 .venv/bin/pytest -m ha -v` (user runs it).

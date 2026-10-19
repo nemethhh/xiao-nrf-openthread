@@ -59,13 +59,13 @@ HA_ALLOW_RESTART=1 .venv/bin/pytest -m "ha and hw" tests/ha/test_end_to_end.py -
 
 ## Home Assistant border router
 
-The XIAO runs `rcp-xiao54` and is the radio of HA's OpenThread Border Router add-on (`core_openthread_border_router` 3.3.0).
+Status: the HA stage is live and verified (2026-10-19): the XIAO runs `rcp-xiao54` and is the radio of HA's OpenThread Border Router add-on (`core_openthread_border_router` 3.3.0).
 The add-on must use `flow_control: true` (the XIAO's USB bridge is silent while DTR is deasserted). `tools/ha.py` is the
 HA client (`python -m tools.ha info|serial|addon-info|datasets`, read-only CLI); `tools/ha_setup.py` installs/configures the
 add-on, confirms discovery and marks the dataset preferred (`python -m tools.ha_setup` is a dry run, `--apply` writes).
 `tests/ha/` checks the result and the end-to-end path (DK joins, gets an OMR address, pings the LAN via NAT64); tests
 skip while the XIAO is not on the HA host. Step-by-step: `docs/checklist.md`, "Move XIAO to Home Assistant"
-(status PENDING until the cable is moved). The `ha_token` file (HA long-lived token) is never committed.
+(DONE and verified live on 2026-10-19; only the add-on restart checks remain, see the checklist). The `ha_token` file (HA long-lived token) is never committed.
 
 Fallback if the nRF54L15 RCP proves unreliable on HA: build and flash `rcp-xiao52` (USB CDC ACM) on the XIAO nRF52840.
 
