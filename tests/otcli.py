@@ -10,6 +10,7 @@ from typing import Callable
 import serial
 
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+ORPHAN_SGR = re.compile(r"^[0-9;]*m(?=uart:~\$)")  # prompt whose leading `\x1b[` was flushed away
 PROMPT = re.compile(r"uart:~\$ ?")  # also redrawn mid-line around asynchronous output
 LOG_LINE = re.compile(r"^\[\d\d:\d\d:\d\d\.\d{3},\d{3}\] <\w+>")
 ERROR = re.compile(r"^Error (\d+): (.*)$")
@@ -33,7 +34,7 @@ class OtCli:
         while True:
             if "\n" in self._buf:
                 raw, self._buf = self._buf.split("\n", 1)
-                return PROMPT.sub("", ANSI.sub("", raw)).strip()
+                return PROMPT.sub("", ORPHAN_SGR.sub("", ANSI.sub("", raw))).strip()
             if time.monotonic() >= deadline:
                 return None
             chunk = self._ser.read(self._ser.in_waiting or 1)

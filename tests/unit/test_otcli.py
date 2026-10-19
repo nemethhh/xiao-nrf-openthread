@@ -180,3 +180,14 @@ def test_onmesh_prefixes_ignores_prefix_without_o_flag_and_routes():
 
 def test_mesh_local_net_from_mleid():
     assert mesh_local_net(["fdde:ad00:beef:0:558:f56b:d688:799"]) == ipaddress.IPv6Network("fdde:ad00:beef::/64")
+
+
+def test_cmd_tolerates_truncated_prompt_escape_before_echo():
+    """Flushing the input buffer can cut the previous prompt's SGR escape in half."""
+    cli = cli_with({"ot networkname": "32muart:~$ \x1b[mot networkname\r\nha-thread-a98e\r\nDone\r\n"})
+    assert cli.cmd("networkname") == ["ha-thread-a98e"]
+
+
+def test_cmd_tolerates_truncated_prompt_escape_with_semicolon():
+    cli = cli_with({"ot ipaddr mleid": "1;32muart:~$ \x1b[mot ipaddr mleid\r\nfdde:ad00:beef:0:8c58:70b9:dafd:7c23\r\nDone\r\n"})
+    assert cli.cmd("ipaddr mleid") == ["fdde:ad00:beef:0:8c58:70b9:dafd:7c23"]
