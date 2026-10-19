@@ -41,6 +41,27 @@ Status: PENDING, only needed if the XIAO nRF54L15 RCP proves unreliable on Home 
 `python -m tools.fw build rcp-xiao52` builds (`build/rcp-xiao52/rcp/zephyr/zephyr.uf2`, Spinel over USB CDC ACM). Flashing needs a double-tap of
 reset on the XIAO nRF52840, then `python -m tools.fw flash rcp-xiao52`. Untested on hardware.
 
+## Antenna fix: reflash XIAO RCP
+
+Status: reflash + local verification DONE 2026-10-19; HA re-run PENDING (needs the XIAO plugged back into the HA host).
+
+The first `rcp-xiao54` image did not drive the RF switch (`CONFIG_GPIO=n`, fixed in commit 5d15ff5; details in
+`docs/hardware-notes.md`, "RF switch driven by the RCP image").
+
+1. DONE 2026-10-19. With the XIAO on this PC: `python -m tools.fw build rcp-xiao54 --pristine && python -m tools.fw flash rcp-xiao54`.
+2. DONE 2026-10-19. `.venv/bin/pytest -m hw tests/hw/test_rcp_local.py -v`: 5/5 pass, including
+   `test_rcp_drives_rf_switch_to_internal_antenna` (P2 DIR `0x128`, OUT `0x108`) and the soak (700/700 at 460800, `build/soak-460800.txt`).
+3. PENDING. Unplug the XIAO from this PC and plug it back into the Home Assistant host. Do not reflash it again.
+4. PENDING. `.venv/bin/python -m tools.ha find-xiao` must print exactly one path, the same as `XIAO_HA_DEVICE` in `tools/ha.py`
+   (exit 1 = stop and investigate).
+5. PENDING (user, from their own terminal: it is an HA write). `.venv/bin/python -m tools.ha_setup --apply`. The add-on keeps its
+   options (device, baudrate 460800, flow_control true); it went to state `error` when its radio disappeared, and `--apply` starts it
+   again and re-confirms discovery and the preferred dataset. Check first with the dry run `.venv/bin/python -m tools.ha_setup`.
+6. PENDING. `.venv/bin/pytest -m "ha and not hw" -v` (the restart test skips without `HA_ALLOW_RESTART=1`).
+7. PENDING. `.venv/bin/pytest -m "ha and hw" tests/ha/test_end_to_end.py -v` (DK joins, OMR address, NAT64 ping; the DK is
+   factory-reset again after each test, so HA's network key does not stay on it).
+8. PENDING. Record results and the date in `docs/hardware-notes.md`.
+
 ## Move XIAO to Home Assistant
 
 Status: DONE 2026-10-19 except the add-on restart checks, which stay PENDING (see below).
@@ -51,7 +72,7 @@ classifier blocks the HA write); the user runs HA writes from their own terminal
 PENDING (run by the user; restarts the add-on once per restart test, `test_otbr_survives_addon_restart` and `test_dk_reattaches_after_addon_restart` skip without it):
 `HA_ALLOW_RESTART=1 .venv/bin/pytest -m ha -v`
 
-The XIAO is flashed with `rcp-xiao54` at 460800 baud (soak passed 700/700 twice). Do not reflash it. The OTBR add-on
+The XIAO is flashed with `rcp-xiao54` at 460800 baud (soak passed 700/700 twice; reflashed with the RF-switch fix, see "Antenna fix: reflash XIAO RCP"). Do not reflash it. The OTBR add-on
 `core_openthread_border_router` 3.3.0 is already installed (stopped). Everything below is tooling that is already written
 and unit-tested; the steps only need the board moved. `ha_token` must be in the repo root.
 
@@ -76,7 +97,7 @@ If the add-on log (Settings > Add-ons > OpenThread Border Router > Log) shows Sp
 
 - The XIAO's SAMD11 USB bridge forwards nothing while DTR is deasserted. `flow_control: false` makes the add-on append
   `&uart-init-deassert` (drops DTR) and failed 8/8 locally; `flow_control: true` appends `&uart-flow-control` (CRTSCTS), which was
-  harmless on the dev host's CDC-ACM but is unconfirmed on HA OS.
+  observed harmless on the dev host and on HA OS (`flow_control: true` works there, 2026-10-19).
 - First confirm the add-on options (`python -m tools.ha addon-info`) show `device = XIAO_HA_DEVICE`, baudrate 460800, flow_control true.
 - If it still fails with true, try `flow_control: false` once (Settings > Add-ons > Configuration) and compare the log. Whichever
   works, set it in `otbr_options` (`tools/ha_setup.py`) and its unit test, and note it in `docs/hardware-notes.md`.

@@ -25,8 +25,8 @@ RCP_BY_ID="/dev/serial/by-id/usb-Seeed_Studio_Seeed_Studio_XIAO_nrf54_CMSIS-DAP_
 # plus `none` (?uart-baudrate=<baud> only), which the add-on cannot produce.
 # With the XIAO's SAMD11 bridge `deassert` does NOT work: it drops DTR, and the bridge then stops forwarding
 # in both directions (docs/hardware-notes.md), so otbr-agent fails with "spinel_driver.cpp Init() Failure".
-# `hw` sets CRTSCTS on the host tty, which a CDC-ACM port ignores, so it is harmless with a bridge that has no
-# RTS/CTS wires; the RCP firmware itself has no flow control (apps/rcp overlay).
+# `hw` sets CRTSCTS on the host tty. With this bridge (no RTS/CTS wires) that was observed harmless on the dev host
+# and on HA OS (the add-on's `flow_control: true` works there); the RCP firmware itself has no flow control (apps/rcp overlay).
 OTBR_FLOW="${OTBR_FLOW:-hw}"
 radio_url() {
     local q="uart-baudrate=$1"

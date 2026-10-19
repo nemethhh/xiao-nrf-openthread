@@ -55,8 +55,7 @@ BOARDS: dict[str, Board] = {
     ),
     "dk": Board("dk", "/dev/serial/by-id/usb-SEGGER_J-Link_001057713759-if02", "jlink", "001057713759"),
     # Port the 802154_sniffer firmware presents (VID 1915:154b, "Nordic Semiconductor ASA" / "nRF 802154 Sniffer",
-    # serial from HWINFO = the chip's device id). Before flashing, the board runs an unknown Zephyr app as
-    # usb-ZEPHYR_USB-DEV_B46C2A1C09259A32-if00. The sniffer path is predicted from the sample's config; verify after flashing.
+    # serial from HWINFO = the chip's device id); verified after flashing (docs/hardware-notes.md).
     "xiao52": Board(
         "xiao52",
         "/dev/serial/by-id/usb-Nordic_Semiconductor_ASA_nRF_802154_Sniffer_B46C2A1C09259A32-if00",

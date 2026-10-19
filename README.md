@@ -60,8 +60,10 @@ HA_ALLOW_RESTART=1 .venv/bin/pytest -m "ha and hw" tests/ha/test_end_to_end.py -
 ## Home Assistant border router
 
 Status: the HA stage is live and verified (2026-10-19): the XIAO runs `rcp-xiao54` and is the radio of HA's OpenThread Border Router add-on (`core_openthread_border_router` 3.3.0).
+The XIAO was since reflashed on this PC with the RF-switch fix; until it is back on the HA host and re-verified, see
+`docs/checklist.md`, "Antenna fix: reflash XIAO RCP".
 The add-on must use `flow_control: true` (the XIAO's USB bridge is silent while DTR is deasserted). `tools/ha.py` is the
-HA client (`python -m tools.ha info|serial|addon-info|datasets`, read-only CLI); `tools/ha_setup.py` installs/configures the
+HA client (`python -m tools.ha info|serial|addon-info|datasets|find-xiao`, read-only CLI; `find-xiao` prints the XIAO's new by-id path on the HA host); `tools/ha_setup.py` installs/configures the
 add-on, confirms discovery and marks the dataset preferred (`python -m tools.ha_setup` is a dry run, `--apply` writes).
 `tests/ha/` checks the result and the end-to-end path (DK joins, gets an OMR address, pings the LAN via NAT64); tests
 skip while the XIAO is not on the HA host. Step-by-step: `docs/checklist.md`, "Move XIAO to Home Assistant"

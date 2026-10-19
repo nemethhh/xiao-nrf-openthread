@@ -18,7 +18,8 @@ Measured facts about the boards and links. Newest entries at the bottom of each 
 
 - `tests/hw/test_router.py` passes 4/4: banner, leader formation, network survives SWD reset
   (rejoins with no commands, dataset unchanged), external-antenna build.
-- Settings persistence: `CONFIG_SETTINGS=y` with ZMS in the settings partition (32 KiB); stored network
+- Settings persistence: `CONFIG_SETTINGS=y` with ZMS in the settings partition (`storage_partition`, 36 KiB = 0x9000 at 0x174000 from the board DTS; Partition Manager is off, so
+  `CONFIG_PM_PARTITION_SIZE_SETTINGS_STORAGE` has no effect and was removed from `apps/*/prj.conf`); stored network
   survives reflash and reset. A node with a stored network autostarts, which swallows a lone
   `ot factoryreset`, so `OtCli.factory_reset` re-sends until the node reports `disabled`.
 - Antenna switch measured electrically (GPIO P2 OUT `0x50050404` over SWD; RF switch control is P2.5, bit 5):
@@ -49,7 +50,7 @@ Measured facts about the boards and links. Newest entries at the bottom of each 
   for the Adafruit bootloader), flash 16% / RAM 22%.
 - Sniffer firmware USB identity (from its `prj.conf`): VID `1915`, PID `154b`, manufacturer "Nordic Semiconductor ASA",
   product "nRF 802154 Sniffer", serial = HWINFO device id (same `B46C2A1C09259A32`). Expected port after flashing:
-  `/dev/serial/by-id/usb-Nordic_Semiconductor_ASA_nRF_802154_Sniffer_B46C2A1C09259A32-if00` (in `BOARDS["xiao52"]`; prediction, unverified).
+  `/dev/serial/by-id/usb-Nordic_Semiconductor_ASA_nRF_802154_Sniffer_B46C2A1C09259A32-if00` (in `BOARDS["xiao52"]`; this was a prediction, now superseded: verified after flashing, see below).
 - A 1200-baud open/close of the CDC ACM port did NOT enter the UF2 bootloader (the running app ignores it); the UF2 drive needs a double-tap of reset.
 - Extcap (`nrf802154_sniffer.py` copied to `~/.local/lib/wireshark/extcap/`) runs on system python3 with system pyserial 3.5 (no venv needed);
   it matches the device by VID/PID 1915:154b. `--extcap-interfaces` works but lists no interface until the sniffer is flashed.
@@ -83,7 +84,8 @@ Measured facts about the boards and links. Newest entries at the bottom of each 
   DTR=1/RTS=1 -> 92 bytes back, DTR=0/RTS=1 -> 0, DTR=1/RTS=0 -> 92, DTR=0/RTS=0 -> 0. (One early run with `uart-init-deassert` right after
   the first flash did work; every later run, 8 of 8 incl. after reflash and reset, failed. Not understood; do not rely on it.)
   Working URL forms at 460800: `?uart-baudrate=460800` and `?uart-baudrate=460800&uart-flow-control`. The latter is what the add-on emits with
-  **"flow_control: true"**, and is harmless here: a CDC-ACM tty ignores CRTSCTS and the RCP UART has no flow control. So for Home Assistant
+  **"flow_control: true"**, and was observed harmless on the dev host and on HA OS (`flow_control: true` works there); the RCP UART
+  has no flow control. (Why CRTSCTS does not stall the CMSIS-DAP CDC-ACM port was not investigated.) So for Home Assistant
   set `baudrate: 460800` and `flow_control: true` (even though there are no RTS/CTS wires). `tools/otbr-local.sh` selects the form with
   `OTBR_FLOW=hw|deassert|none`, default `hw`.
 - Tests: `tests/hw/test_rcp_local.py` 3/3 pass at 460800 (RCP version, OTBR leader within 30 s, DK joins and pings 20/20).
@@ -91,6 +93,19 @@ Measured facts about the boards and links. Newest entries at the bottom of each 
   + 100 x 1000 B at 0.5 s (fragmented) = 700/700 received (0.00% loss); container `RestartCount 0`, running; no RCP/Spinel
   reset/restore/fail/timeout lines in the OTBR log (672 s). Evidence: `build/soak-460800.txt`. No need to test 115200 or lower `RCP_BAUD`
   (`tools/fw.py` keeps `RCP_BAUD = 460800`). The soak is the single 12-minute run; longer-term stability is for Task 8 on HA.
+
+### RF switch driven by the RCP image (2026-10-19, later)
+
+- The first `rcp-xiao54` image (the one HA ran until now) had `CONFIG_GPIO=n` from the NCS sample, so neither the GPIO nor the
+  fixed-regulator driver was built: the RF switch's power (rfsw-pwr, P2.3) and select (rfsw-ctl, P2.5) were not driven.
+  Fixed in `apps/rcp/boards/xiao_nrf54l15_nrf54l15_cpuapp.conf` (commit 5d15ff5): `build/rcp-xiao54` `.config` has
+  `CONFIG_GPIO=y`, `CONFIG_REGULATOR_FIXED=y`, and still no `CONFIG_CONSOLE`/`CONFIG_LOG`/`CONFIG_SHELL` (Spinel only on uart20).
+- Fixed image flashed to the XIAO on this PC. Raw GPIO P2 over SWD: DIR = `0x128`,
+  OUT = `0x108`: P2.3 is an output driven high (switch powered), P2.5 an output driven low (on-board ceramic antenna).
+- `tests/hw/test_rcp_local.py` 5/5 pass at 460800, including the new `test_rcp_drives_rf_switch_to_internal_antenna` and the soak:
+  700/700 received (600 x 64 B + 100 x 1000 B), container `0 true`, 1 otbr-agent start, 0 exits, no suspicious log lines
+  (evidence `build/soak-460800.txt`, 21:31).
+- Still to do with the XIAO back on the HA host: `docs/checklist.md`, "Antenna fix: reflash XIAO RCP".
 
 ## Home Assistant baseline (read-only, "before XIAO", 2026-10-19)
 - HA at `http://192.168.50.10` (port 80), Core 2026.10.2; Supervisor calls work via WebSocket `supervisor/api` (`python -m tools.ha ...`).
