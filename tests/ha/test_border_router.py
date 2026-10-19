@@ -50,4 +50,5 @@ def test_otbr_survives_addon_restart(ha):
     else:
         pytest.fail("add-on not started within 90 s after restart")
     ds_after = next(d for d in ha.thread_datasets() if d.get("preferred") is True)
-    assert ha.thread_dataset_tlv(ds_after["dataset_id"]) == before
+    same = ha.thread_dataset_tlv(ds_after["dataset_id"]) == before  # boolean first: never put TLVs in an assert
+    assert same, "dataset TLV changed after restart"

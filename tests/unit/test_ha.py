@@ -338,3 +338,31 @@ def test_confirm_flow_http_error_hides_token(token_file):
     finally:
         srv.shutdown()
     assert ei.value.code == "http_404" and TOKEN not in str(ei.value)
+
+
+def test_find_xiao_cli(monkeypatch, capsys):
+    import tools.ha as ha_mod
+
+    new = "/dev/serial/by-id/usb-Seeed_XIAO_nrf54_x-if02"
+
+    class Fake:
+        def __init__(self, devs):
+            self.devs = devs
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+        def serial_devices(self):
+            return self.devs
+
+    monkeypatch.setattr(ha_mod, "HA_SERIAL_BASELINE", ["/dev/serial/by-id/usb-A"])
+    monkeypatch.setattr(ha_mod, "HaClient", lambda: Fake(["/dev/serial/by-id/usb-A", new]))
+    assert ha_mod.main(["find-xiao"]) == 0
+    assert capsys.readouterr().out.strip() == new
+    monkeypatch.setattr(ha_mod, "HaClient", lambda: Fake(["/dev/serial/by-id/usb-A"]))
+    assert ha_mod.main(["find-xiao"]) == 1
+    monkeypatch.setattr(ha_mod, "HaClient", lambda: Fake(["/dev/serial/by-id/usb-A", new, new + "2"]))
+    assert ha_mod.main(["find-xiao"]) == 1

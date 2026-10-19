@@ -57,11 +57,17 @@ class StubClient:
         self.info["state"] = "started"
         self._maybe_timeout("start")
 
+    def restart_addon(self, slug):
+        self.calls.append("restart")
+        self.info["state"] = "started"
+
     def discovery_flows(self, handler):
         return list(self.flows.get(handler, []))
 
     def confirm_flow(self, flow_id):
         self.calls.append(("confirm", flow_id))
+        if flow_id in getattr(self, "gone", ()):
+            raise HaError("http_404", "confirm_flow rejected")
         for h, fl in self.flows.items():
             self.flows[h] = [f for f in fl if f["flow_id"] != flow_id]
         if self.dataset_after_confirm is not None:
@@ -199,3 +205,63 @@ def test_main_apply_refuses_when_device_missing(monkeypatch, capsys):
     monkeypatch.setattr(ha_setup, "HaClient", lambda: Ctx())
     assert ha_setup.main(["--apply"]) == 1
     assert c.calls == []
+
+
+def test_started_with_different_options_restarts():
+    c = StubClient(state="started", options={"device": "/dev/old"}, datasets=[OTBR_DS])
+    run(c)
+    assert ("options", otbr_options(DEV, 460800)) in c.calls
+    assert "restart" in c.calls and "start" not in c.calls
+    assert c.calls.index("restart") > c.calls.index(("options", otbr_options(DEV, 460800)))
+
+
+def test_stopped_with_different_options_starts_not_restarts():
+    c = StubClient(state="stopped", options={"device": "/dev/old"}, datasets=[OTBR_DS])
+    run(c)
+    assert "start" in c.calls and "restart" not in c.calls
+
+
+def test_waits_for_otbr_dataset_not_any_dataset():
+    other = {"dataset_id": "z", "source": "manual", "preferred": False}
+    c = StubClient(datasets=[other], flows={"otbr": [{"flow_id": "f1"}], "thread": []})
+    c.dataset_after_confirm = [other, OTBR_DS]
+    run(c)
+    assert ("preferred", "d1") in c.calls
+
+
+def test_no_otbr_dataset_times_out_even_with_other_dataset():
+    other = {"dataset_id": "z", "source": "manual", "preferred": False}
+    c = StubClient(datasets=[other])
+    with pytest.raises(TimeoutError):
+        run(c)
+
+
+def test_vanished_flow_is_tolerated():
+    c = StubClient(flows={"otbr": [{"flow_id": "gone1"}, {"flow_id": "f2"}], "thread": []})
+    c.gone = {"gone1"}
+    c.dataset_after_confirm = [OTBR_DS]
+    run(c)
+    assert ("confirm", "f2") in c.calls and ("preferred", "d1") in c.calls
+
+
+def test_other_flow_errors_still_raise():
+    class Boom(StubClient):
+        def confirm_flow(self, flow_id):
+            raise HaError("http_500", "x")
+
+    c = Boom(flows={"otbr": [{"flow_id": "f"}], "thread": []})
+    with pytest.raises(HaError):
+        run(c)
+
+
+def test_check_xiao_path_matches(monkeypatch):
+    monkeypatch.setattr(ha_setup, "HA_SERIAL_BASELINE", ["/dev/serial/by-id/usb-A"])
+    c = StubClient(serial=["/dev/serial/by-id/usb-A", XIAO_HA_DEVICE])
+    ha_setup.check_xiao_path(c)
+
+
+def test_check_xiao_path_mismatch_refuses(monkeypatch):
+    monkeypatch.setattr(ha_setup, "HA_SERIAL_BASELINE", [])
+    c = StubClient(serial=["/dev/serial/by-id/usb-Seeed_XIAO_nrf54_other-if02"])
+    with pytest.raises(RuntimeError, match="XIAO_HA_DEVICE"):
+        ha_setup.check_xiao_path(c)

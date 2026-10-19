@@ -10,7 +10,7 @@ import time
 from typing import Callable
 
 from tools.fw import RCP_BAUD
-from tools.ha import OTBR_SLUG, XIAO_HA_DEVICE, HaClient, HaError
+from tools.ha import HA_SERIAL_BASELINE, OTBR_SLUG, XIAO_HA_DEVICE, HaClient, HaError, find_new_xiao
 
 OTBR_SOURCE_MARKERS = ("otbr", "openthread", "open thread", "border router")
 
@@ -65,6 +65,13 @@ def _check_device(client, device: str) -> None:
         raise RuntimeError(f"{device} is not visible to Home Assistant; plug the XIAO in and re-check `python -m tools.ha serial`")
 
 
+def check_xiao_path(client) -> None:
+    """The single new XIAO entry (vs the recorded baseline) must equal XIAO_HA_DEVICE."""
+    found = find_new_xiao(HA_SERIAL_BASELINE, client.serial_devices())  # ValueError on 0 or several
+    if found != XIAO_HA_DEVICE:
+        raise RuntimeError(f"XIAO_HA_DEVICE ({XIAO_HA_DEVICE}) differs from the device found on HA ({found}); update XIAO_HA_DEVICE in tools/ha.py")
+
+
 def plan_otbr(client, *, device: str, baud: int) -> list[str]:
     """Read-only description of what setup_otbr would do right now."""
     want = otbr_options(device, baud)
@@ -110,7 +117,9 @@ def setup_otbr(client, *, device: str, baud: int, timeout: float = 180.0,
         if client.addon_info(OTBR_SLUG) is None:
             raise RuntimeError("add-on still not installed after install")
 
+    options_written = False
     if not _options_match(client.addon_info(OTBR_SLUG), want):
+        options_written = True
         _write(lambda: client.set_addon_options(OTBR_SLUG, want),
                lambda: _options_match(client.addon_info(OTBR_SLUG), want), timeout, sleep, "options")
 
@@ -120,19 +129,27 @@ def setup_otbr(client, *, device: str, baud: int, timeout: float = 180.0,
     if not started():
         _write(lambda: client.start_addon(OTBR_SLUG), started, timeout, sleep, "start")
         _wait_for(started, timeout, sleep, "add-on state started")
+    elif options_written:
+        # Already running with the old configuration: restart so the new options take effect.
+        _write(lambda: client.restart_addon(OTBR_SLUG), started, timeout, sleep, "restart")
+        _wait_for(started, timeout, sleep, "add-on state started after restart")
 
     def confirm_pending_and_check() -> bool:
         for handler in ("otbr", "thread"):
             for flow in client.discovery_flows(handler):
-                client.confirm_flow(flow["flow_id"])
+                try:
+                    client.confirm_flow(flow["flow_id"])
+                except HaError as e:
+                    if e.code not in ("http_404", "http_400"):  # flow vanished between list and confirm
+                        raise
         try:
-            return bool(client.thread_datasets())
+            return any(_is_otbr_source(d) for d in client.thread_datasets())
         except HaError as e:
             if e.code == "unknown_command":  # thread integration not loaded yet
                 return False
             raise
 
-    _wait_for(confirm_pending_and_check, timeout, sleep, "a Thread dataset")
+    _wait_for(confirm_pending_and_check, timeout, sleep, "an OTBR Thread dataset")
 
     datasets = client.thread_datasets()
     preferred = [d for d in datasets if d.get("preferred")]
@@ -157,6 +174,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with HaClient() as ha:
             if apply:
+                check_xiao_path(ha)
                 setup_otbr(ha, device=XIAO_HA_DEVICE, baud=RCP_BAUD)
                 print("OTBR set up: add-on started, flows confirmed, preferred dataset set")
                 return 0
@@ -165,7 +183,7 @@ def main(argv: list[str] | None = None) -> int:
             for line in lines:
                 print(" -", line)
             return 1 if any("NOT visible" in x for x in lines) else 0
-    except (HaError, RuntimeError, TimeoutError) as e:
+    except (HaError, RuntimeError, TimeoutError, ValueError) as e:
         print(f"ha_setup: {e}", file=sys.stderr)
         return 1
     except OSError as e:

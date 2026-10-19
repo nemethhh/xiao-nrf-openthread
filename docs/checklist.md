@@ -51,16 +51,16 @@ The XIAO is flashed with `rcp-xiao54` at 460800 baud (soak passed 700/700 twice)
 and unit-tested; the steps only need the board moved. `ha_token` must be in the repo root.
 
 1. Unplug the XIAO from this PC and plug it into the Home Assistant host.
-2. `.venv/bin/python -m tools.ha serial` — expect a new `...XIAO_nrf54_CMSIS-DAP_AA2C939D-if02` entry
-   (baseline before plugging: only `/dev/ttyS0-3`, no by-id entries). If the path differs, set `XIAO_HA_DEVICE` in
-   `tools/ha.py` (`find_new_xiao(baseline, current)` picks the single new `XIAO_nrf54` entry; zero or several = stop and
-   investigate, do not guess). Record the confirmed path in `docs/hardware-notes.md`.
+2. `.venv/bin/python -m tools.ha find-xiao` — diffs HA's serial devices against the recorded baseline
+   (`HA_SERIAL_BASELINE` in `tools/ha.py`: no by-id entries before plugging) and prints the single new `XIAO_nrf54` path;
+   exit 1 on zero or several = stop and investigate, do not guess. If the path differs from `XIAO_HA_DEVICE`, set that
+   constant in `tools/ha.py` (`ha_setup --apply` refuses while they differ). Record the confirmed path in `docs/hardware-notes.md`.
 3. `.venv/bin/python -m tools.ha_setup` — dry run (read-only). Expect "device ... visible", options to be written
    (`flow_control: true`, baudrate 460800, nat64 and firewall on), then start.
 4. `.venv/bin/python -m tools.ha_setup --apply` — writes: options, start, confirm otbr then thread discovery flows, wait for a
    dataset, mark it preferred (refuses with a message if a non-OTBR dataset is already preferred: ask which network should win).
    Safe to run twice.
-5. `.venv/bin/pytest -m ha -v` — border-router tests (the restart test skips without `HA_ALLOW_RESTART=1`).
+5. `.venv/bin/pytest -m "ha and not hw" -v` — border-router tests (the restart test skips without `HA_ALLOW_RESTART=1`).
 6. `HA_ALLOW_RESTART=1 .venv/bin/pytest -m "ha and hw" tests/ha/test_end_to_end.py -v` — DK joins HA's network, gets an OMR
    address, pings this PC's IPv4 via NAT64, and reattaches after an add-on restart. Setting `HA_ALLOW_RESTART=1` is the permission
    to restart the add-on. If the PC firewall drops ICMP, open it temporarily and close it afterwards.

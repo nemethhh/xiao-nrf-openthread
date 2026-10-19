@@ -51,7 +51,8 @@ Test tiers:
 .venv/bin/pytest -q                        # unit tests only (no hardware, no Home Assistant)
 .venv/bin/pytest -m hw -v                  # boards on this PC: router, two-node, local RCP against an isolated OTBR
 .venv/bin/pytest -m soak -v                # long RCP reliability soak
-.venv/bin/pytest -m ha -v                  # Home Assistant stage (read-only; skips until the XIAO is on the HA host)
+.venv/bin/pytest -m "ha and not hw" -v     # Home Assistant stage (read-only; skips until the XIAO is on the HA host)
+HA_ALLOW_RESTART=1 .venv/bin/pytest -m "ha and hw" tests/ha/test_end_to_end.py -v   # end-to-end, flashes the DK
 ```
 
 `-m hw` router tests need the XIAO on this PC, so they are not rerun once it lives on Home Assistant.

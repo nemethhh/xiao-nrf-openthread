@@ -1,6 +1,6 @@
 """Home Assistant WebSocket client (sync). The token is never printed, logged or put in errors.
 
-CLI is read-only: python -m tools.ha info|serial|addon-info [slug]|datasets
+CLI is read-only: python -m tools.ha info|serial|find-xiao|addon-info [slug]|datasets
 Writes (install/options/start/restart, confirm_flow, set_preferred_dataset) exist only as Python API.
 """
 from __future__ import annotations
@@ -25,6 +25,10 @@ _UNSET: Any = object()
 # host; Task 8 confirms it by diffing `python -m tools.ha serial` against the pre-plug baseline
 # (find_new_xiao). Interface 02 is the SAMD11 bridge's CDC-ACM UART.
 XIAO_HA_DEVICE = "/dev/serial/by-id/usb-Seeed_Studio_Seeed_Studio_XIAO_nrf54_CMSIS-DAP_AA2C939D-if02"
+
+# HA serial by-id devices recorded BEFORE the XIAO was plugged into the HA host (Task 7: only /dev/ttyS0-3,
+# which have no by-id entry). `python -m tools.ha find-xiao` diffs the live list against this.
+HA_SERIAL_BASELINE: list[str] = []
 
 
 def find_new_xiao(baseline: list[str], current: list[str]) -> str:
@@ -197,6 +201,12 @@ def main(argv: list[str] | None = None) -> int:
             elif cmd == "serial":
                 for d in ha.serial_devices():
                     print(d)
+            elif cmd == "find-xiao":
+                try:
+                    print(find_new_xiao(HA_SERIAL_BASELINE, ha.serial_devices()))
+                except ValueError as e:
+                    print(f"find-xiao: {e}", file=sys.stderr)
+                    return 1
             elif cmd == "addon-info":
                 slug = argv[1] if len(argv) > 1 else OTBR_SLUG
                 info = ha.addon_info(slug)
@@ -211,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
                 except HaError as e:
                     print(f"thread datasets unavailable ({e.code}): thread integration probably not loaded")
             else:
-                print("usage: python -m tools.ha info|serial|addon-info [slug]|datasets", file=sys.stderr)
+                print("usage: python -m tools.ha info|serial|find-xiao|addon-info [slug]|datasets", file=sys.stderr)
                 return 2
     except HaError as e:
         print(f"HA error: {e}", file=sys.stderr)
