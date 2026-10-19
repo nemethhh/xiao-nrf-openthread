@@ -36,3 +36,17 @@ def test_xiao54_rcp_uart_carries_spinel_only():
     config = kconfig("rcp-xiao54")
     for option in ("CONFIG_CONSOLE", "CONFIG_UART_CONSOLE", "CONFIG_LOG", "CONFIG_SHELL"):
         assert config.get(option) != "y", f"{option}=y would put stray bytes on the Spinel UART"
+
+
+def test_router_xiao52_shell_on_usb_headless_with_persistent_settings():
+    """router-xiao52: shell on native USB that never waits for a host, long lines fit, settings in flash."""
+    config = kconfig("router-xiao52")
+    assert config.get("CONFIG_USB_DEVICE_STACK_NEXT") == "y"
+    assert config.get("CONFIG_CDC_ACM_SERIAL_INITIALIZE_AT_BOOT") == "y"
+    assert config.get("CONFIG_CDC_ACM_SERIAL_PRODUCT_STRING") == '"XIAO nRF52840 Thread Router"'  # fw.BOARDS["xiao52"]
+    # A 64-byte RX ring dropped the rest of `ot dataset set active <tlv>` (USB delivers 64-byte bursts).
+    assert int(config["CONFIG_SHELL_BACKEND_SERIAL_RX_RING_BUFFER_SIZE"]) >= int(config["CONFIG_SHELL_CMD_BUFF_SIZE"])
+    for option in ("CONFIG_OPENTHREAD_MANUAL_START", "CONFIG_SETTINGS", "CONFIG_SETTINGS_ZMS", "CONFIG_OPENTHREAD_FTD",
+                   "CONFIG_DEVMEM_SHELL"):  # devmem: tools.fw enters the UF2 bootloader through it
+        assert config.get(option) == "y", option
+    assert config.get("CONFIG_OPENTHREAD_SETTINGS_RAM") != "y"

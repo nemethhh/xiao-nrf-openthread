@@ -312,3 +312,13 @@ def test_opening_the_port_sends_an_empty_line_first():
     assert fake.written == [""]
     assert cli.cmd("state") == ["disabled"]
     assert fake.written == ["", "ot state"]
+
+
+def test_reopens_counts_port_losses():
+    """Lets a hardware test prove that a reset really rebooted a native-USB board (its port vanished)."""
+    board = UsbBoard(state="child")
+    cli = OtCli("usb", serial_factory=board.open)
+    assert cli.reopens == 0
+    cli.reboot()
+    cli.wait_state({"child"}, 20, poll_timeout=0.2)
+    assert cli.reopens == 1

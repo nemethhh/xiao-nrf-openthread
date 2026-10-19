@@ -42,6 +42,7 @@ class OtCli:
         self._factory = serial_factory
         self._ser = None
         self._buf = ""
+        self.reopens = 0  # times a lost port was opened again (a native-USB board rebooted)
         self._open(serial_factory(port, baudrate=baudrate, timeout=0.05))
 
     def _open(self, ser) -> None:
@@ -64,6 +65,7 @@ class OtCli:
             except PORT_ERRORS as e:  # serial.SerialException is an OSError
                 time.sleep(0.5)  # the device is still re-enumerating
                 raise PortLost(f"serial port not back yet: {type(e).__name__}") from None
+            self.reopens += 1
             self._open(ser)
         return self._ser
 

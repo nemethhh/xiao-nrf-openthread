@@ -41,7 +41,15 @@ def joined52(ha, xiao52):
 
 
 @pytest.fixture
-def dk_on_ha(ha, joined52, dk_image, dk):
+def router52(joined52):
+    """The nRF52840 in its permanent role. Pinging it while it upgrades from child to router lost 3/10
+    (its RLOC16 changes mid-way), so the DK tests start once it is a router."""
+    joined52.wait_state({"router"}, 180)
+    return joined52
+
+
+@pytest.fixture
+def dk_on_ha(ha, router52, dk_image, dk):
     ha_join.run("dk", ha, dk)
     return dk
 
@@ -83,24 +91,28 @@ def test_xiao52_becomes_router(joined52):
 
 def test_xiao52_rejoins_after_reset_without_commands(joined52, preferred):
     mleid = joined52.cmd("ipaddr mleid")
+    reopens = joined52.reopens
     joined52.reboot()  # `ot reset`; the USB port vanishes and comes back
     t0 = time.monotonic()
     # No dataset or start commands: the router must come back on its own.
     state = joined52.wait_state({"child", "router"}, 120)
+    assert joined52.reopens > reopens, "the serial port never vanished: the board did not reboot"
     print(f"back as {state} after {time.monotonic() - t0:.0f} s")
     same_network(joined52, preferred)
     assert joined52.cmd("ipaddr mleid") == mleid
 
 
-def test_dk_joins_ha_network_and_pings_xiao52(dk_on_ha, joined52, preferred):
+def test_dk_joins_ha_network_and_pings_xiao52(dk_on_ha, router52, preferred):
     same_network(dk_on_ha, preferred)
-    sent, got = ping(dk_on_ha, joined52.cmd("ipaddr mleid")[0], 10)
+    sent, got = ping(dk_on_ha, router52.cmd("ipaddr mleid")[0], 10)
+    print(f"DK -> XIAO nRF52840 mleid: {got}/{sent} received")
     assert sent == 10 and got >= 9
 
 
-def test_xiao52_headless_after_reset(dk_on_ha, joined52):
+def test_xiao52_headless_after_reset(dk_on_ha, router52):
     """After a reset with no host on its serial port (closed: DTR low, nobody reading), the nRF52840 still
     rejoins: the DK reaches its mesh-local EID while the port stays closed."""
+    joined52 = router52
     mleid = joined52.cmd("ipaddr mleid")[0]
     joined52.reboot()
     joined52.close()  # the port is not reopened until the DK has reached the router
