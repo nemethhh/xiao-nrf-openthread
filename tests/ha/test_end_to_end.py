@@ -8,8 +8,9 @@ import time
 import pytest
 
 from tests.conftest import ensure_flashed
-from tests.otcli import OtError, mesh_local_net, onmesh_prefixes
+from tests.otcli import mesh_local_net, onmesh_prefixes
 from tools.ha import OTBR_SLUG
+from tools.ha_join import _set_dataset
 
 pytestmark = [pytest.mark.ha, pytest.mark.hw]
 
@@ -36,12 +37,7 @@ def dk_image(ha):
 @pytest.fixture
 def joined(ha, preferred, ha_dataset_hex, dk_image, dk):
     """Fixture order matters: `ha` skips before any hardware is touched."""
-    try:
-        dk.cmd(f"dataset set active {ha_dataset_hex}")  # the command text contains the network key
-    except TimeoutError:
-        raise TimeoutError("dataset set active timed out") from None
-    except OtError as e:
-        raise RuntimeError(f"dataset set active failed (error code {e.code})") from None
+    _set_dataset(dk, ha_dataset_hex)  # the command contains the network key: kept a Secret, errors redacted
     for c in ("ifconfig up", "thread start"):
         dk.cmd(c)
     dk.wait_state({"child", "router"}, 90)

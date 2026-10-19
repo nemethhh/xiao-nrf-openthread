@@ -10,6 +10,14 @@ import pytest
 from tests.otcli import OtCli
 from tools import fw
 
+def pytest_configure(config) -> None:
+    """Refuse `-l/--showlocals`: frame locals can hold Home Assistant's Thread network key (the shell echoes
+    `ot dataset set active <tlv>` back into OtCli.cmd's locals). Secret (tools/ha.py) only covers repr() of values
+    that keep its type, which is all a default long traceback prints (function arguments)."""
+    if config.getoption("showlocals", False):
+        raise pytest.UsageError("--showlocals/-l is refused in this repo: test locals can hold the Thread network key")
+
+
 # What each board currently runs, so tests only rebuild/reflash when the image changes.
 _flashed: dict[str, tuple] = {}
 

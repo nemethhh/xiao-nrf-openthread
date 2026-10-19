@@ -65,8 +65,13 @@ Test tiers:
 .venv/bin/pytest -m soak -v                # long RCP reliability soak
 .venv/bin/pytest -m "ha and not hw" -v     # Home Assistant stage (read-only; skips until the XIAO is on the HA host)
 HA_ALLOW_RESTART=1 .venv/bin/pytest -m "ha and hw" tests/ha/test_end_to_end.py -v   # end-to-end, flashes the DK
-.venv/bin/pytest -m "ha and hw" tests/ha/test_xiao52_router.py -v   # nRF52840 router in HA's network (+ DK); re-provision after
+XIAO52_ALLOW_DEPROVISION=1 .venv/bin/pytest -m "ha and hw" tests/ha/test_xiao52_router.py -v   # nRF52840 router in HA's network (+ DK)
 ```
+
+`tests/ha/test_xiao52_router.py` factory-resets the permanent nRF52840 router (it drops out of HA's mesh), so it skips
+unless `XIAO52_ALLOW_DEPROVISION=1` is set, also under a plain `-m hw`; at the end it re-provisions the board as a router
+(if that fails it warns: run `python -m tools.ha_join xiao52 --router`). `-l/--showlocals` is refused (`tests/conftest.py`):
+frame locals can hold Home Assistant's Thread network key.
 
 `-m hw` router tests need the XIAO on this PC, so they are not rerun once it lives on Home Assistant.
 
@@ -106,8 +111,8 @@ python -m tools.ha_join xiao52 --router     # join HA's preferred network and wa
 `ot thread start`, after `ot thread stop` if the board is on another network); a board already on the network is left
 alone. It prints the plan first and never prints the TLV (it holds the network key). Any board in `fw.BOARDS` running
 thread-cli works (the DK too). After that the board needs no host: plug it into any USB charger and it rejoins as a
-router by itself. `tests/ha/test_xiao52_router.py` factory-resets the board before and after each test, so run
-`python -m tools.ha_join xiao52 --router` again afterwards.
+router by itself. `tests/ha/test_xiao52_router.py` factory-resets the board before and after each test; it runs only
+with `XIAO52_ALLOW_DEPROVISION=1` and re-provisions the board as a router at the end.
 
 Back to the sniffer: `python -m tools.fw build sniffer-xiao52 && python -m tools.fw flash sniffer-xiao52` (automatic
 bootloader entry from the router firmware); the port becomes `fw.XIAO52_SNIFFER_PORT`. The board then leaves HA's

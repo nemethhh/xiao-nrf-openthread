@@ -3,20 +3,57 @@
 Needs: the XIAO nRF54L15 RCP on the HA host (the `ha` fixture skips otherwise), the XIAO nRF52840 on this PC running
 router-xiao52 (skips otherwise: flashing it needs a reset double-tap, so the tests never reflash it), and the DK.
 Joining goes through tools.ha_join, the same code that provisions the board. Both boards are factory-reset before
-and after each test, so HA's network key does not stay on them; re-provision the nRF52840 afterwards with
-`python -m tools.ha_join xiao52 --router`.
+and after each test, so HA's network key does not stay on the DK.
+
+The nRF52840 is a PERMANENT router in HA's mesh, and these tests take it out (factory reset). So the module runs only
+with XIAO52_ALLOW_DEPROVISION=1 (it skips otherwise, also under a plain `pytest -m hw`), and re-provisions the board
+as a router at the end (`python -m tools.ha_join xiao52 --router`; a failure there warns with that command).
 """
 import os
 import re
 import time
+import warnings
 
 import pytest
 
 from tests.conftest import _cli, ensure_flashed
-from tests.otcli import OtError
+from tests.otcli import OtCli, OtError
 from tools import fw, ha_join
+from tools.ha import HaClient
 
 pytestmark = [pytest.mark.ha, pytest.mark.hw]
+
+OPT_IN = "XIAO52_ALLOW_DEPROVISION"
+_touched: list[str] = []  # set once a test factory-resets the nRF52840
+
+
+def reprovision(make_ha=lambda: HaClient(token_path=str(fw.REPO / "ha_token")), make_cli=OtCli, run=ha_join.run) -> None:
+    """Put the nRF52840 back into HA's network as a router (HA is only read)."""
+    with make_ha() as ha:
+        cli = make_cli(fw.BOARDS["xiao52"].serial_port)
+        try:
+            run("xiao52", ha, cli, router=True)
+        finally:
+            cli.close()
+
+
+def _opt_in_then_reprovision(environ, touched, reprovision_fn):
+    if environ.get(OPT_IN) != "1":
+        pytest.skip(f"factory-resets the permanent nRF52840 router (out of HA's mesh until re-provisioned); set {OPT_IN}=1")
+    yield
+    if touched:
+        try:
+            reprovision_fn()
+        except Exception as e:  # noqa: BLE001 - teardown must not mask the test outcome
+            warnings.warn(
+                f"xiao52 NOT re-provisioned ({type(e).__name__}: {e}); run python -m tools.ha_join xiao52 --router",
+                stacklevel=1,
+            )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def deprovision_opt_in():
+    yield from _opt_in_then_reprovision(os.environ, _touched, reprovision)
 
 
 @pytest.fixture
@@ -31,6 +68,7 @@ def xiao52(ha):
     if not os.path.exists(port):
         pytest.skip(f"XIAO nRF52840 not running router-xiao52 ({port} missing): double-tap reset, "
                     "then python -m tools.fw flash router-xiao52")
+    _touched.append("xiao52")
     yield from _cli("xiao52")
 
 
@@ -113,11 +151,16 @@ def test_xiao52_headless_after_reset(dk_on_ha, router52):
     """After a reset with no host on its serial port (closed: DTR low, nobody reading), the nRF52840 still
     rejoins: the DK reaches its mesh-local EID while the port stays closed."""
     joined52 = router52
+    port = fw.BOARDS["xiao52"].serial_port
     mleid = joined52.cmd("ipaddr mleid")[0]
     joined52.reboot()
-    joined52.close()  # the port is not reopened until the DK has reached the router
     t0 = time.monotonic()
-    time.sleep(10)  # the reboot itself; a ping now could still be answered by the old instance
+    while os.path.exists(port) and time.monotonic() - t0 < 5:
+        time.sleep(0.1)
+    gone = not os.path.exists(port)
+    joined52.close()  # the port is not reopened until the DK has reached the router
+    assert gone, f"{port} did not vanish within 5 s of `ot reset`: the board did not reboot"
+    time.sleep(max(0.0, 10 - (time.monotonic() - t0)))  # let the reboot finish before the first ping
     last = None
     while time.monotonic() - t0 < 150:
         try:

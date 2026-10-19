@@ -241,9 +241,16 @@ AIRCR_SYSRESETREQ = 0x05FA0004  # VECTKEY | SYSRESETREQ
 def uf2_bootloader_commands() -> list[str]:
     """Zephyr shell (devmem) lines that reboot a running thread-cli nRF52840 into its UF2 bootloader.
 
-    The reset is a raw SYSRESETREQ, not `kernel reboot`, so nothing rewrites GPREGRET on the way down.
+    GPREGRET is retained across soft resets, and NCS v3.4.1's sys_arch_reboot does not touch it (so `kernel reboot`
+    or `ot reset` would also land in the bootloader once the magic is set). The reset is a raw SYSRESETREQ through
+    devmem so the whole sequence uses one mechanism. A magic left behind would send the permanent router into UF2
+    mode at its next reset, so a failed attempt clears it (gpregret_clear_command).
     """
     return [f"devmem {NRF52_GPREGRET:#x} 32 {UF2_MAGIC:#x}", f"devmem {SCB_AIRCR:#x} 32 {AIRCR_SYSRESETREQ:#x}"]
+
+
+def gpregret_clear_command() -> str:
+    return f"devmem {NRF52_GPREGRET:#x} 32 0x0"
 
 
 def _uf2_volume() -> Path | None:
@@ -269,28 +276,41 @@ def _enter_uf2_bootloader(board: Board) -> bool:
 
     set_magic, reset = uf2_bootloader_commands()
     print(f"+ {board.serial_port}: {set_magic}; {reset}", flush=True)
+    # Errors opening the port (permission denied, busy) propagate: they are not the reset.
+    port = serial.Serial(board.serial_port, 115200, timeout=0.5)
+    reset_sent = False
     try:
-        with serial.Serial(board.serial_port, 115200, timeout=0.5) as port:
-            # Opening the port releases the shell's output held back until DTR; the first line written then
-            # can be swallowed (seen live), so flush with an empty line and read the magic back before resetting.
-            port.write(b"\r\n")
-            time.sleep(1.0)
-            port.reset_input_buffer()
-            for _ in range(3):
-                port.write(f"{set_magic}\r\n".encode())
-                time.sleep(0.5)
-                port.reset_input_buffer()
-                port.write(f"devmem {NRF52_GPREGRET:#x}\r\n".encode())
-                time.sleep(0.5)
-                if f"Read value {UF2_MAGIC:#x}" in port.read(4096).decode(errors="replace"):
-                    break
-            else:
-                print(f"{board.serial_port}: GPREGRET read-back failed; not resetting", flush=True)
-                return False
-            port.write(f"{reset}\r\n".encode())
+        # Opening the port releases the shell's output held back until DTR; the first line written then
+        # can be swallowed (seen live), so flush with an empty line and read the magic back before resetting.
+        port.write(b"\r\n")
+        time.sleep(1.0)
+        port.reset_input_buffer()
+        for _ in range(3):
+            port.write(f"{set_magic}\r\n".encode())
             time.sleep(0.5)
+            port.reset_input_buffer()
+            port.write(f"devmem {NRF52_GPREGRET:#x}\r\n".encode())
+            time.sleep(0.5)
+            if f"Read value {UF2_MAGIC:#x}" in port.read(4096).decode(errors="replace"):
+                break
+        else:
+            # Some write may still have landed: clear the magic, or the next reset enters the bootloader.
+            port.write(f"{gpregret_clear_command()}\r\n".encode())
+            time.sleep(0.5)
+            print(f"{board.serial_port}: GPREGRET read-back failed; magic cleared, not resetting", flush=True)
+            return False
+        reset_sent = True  # the board may reset while this write is still in flight
+        port.write(f"{reset}\r\n".encode())
+        time.sleep(0.5)
     except OSError:
-        pass  # the port vanishes with the reset
+        if not reset_sent:
+            raise
+        # the port vanishes with the reset
+    finally:
+        try:
+            port.close()
+        except OSError:
+            pass
     return True
 
 

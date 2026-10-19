@@ -322,3 +322,28 @@ def test_reopens_counts_port_losses():
     cli.reboot()
     cli.wait_state({"child"}, 20, poll_timeout=0.2)
     assert cli.reopens == 1
+
+
+def test_secret_command_stays_redacted_in_cmd_frame_locals():
+    """`pytest -l` and debuggers show frame locals: `line_sent` must keep the Secret type of the command."""
+    from tools.ha import Secret
+
+    class DyingSerial(FakeSerial):
+        def write(self, data):
+            if data.strip():
+                raise OSError(5, "Input/output error")
+
+    cli = OtCli("fake", serial_factory=lambda *a, **kw: DyingSerial({}))
+    key = "00112233445566778899aabbccddeeff"
+    try:
+        cli.cmd("dataset set active " + Secret("0e08" + key))
+    except TimeoutError as e:
+        tb = e.__traceback__
+    else:
+        raise AssertionError("expected PortLost")
+    while tb is not None:
+        if tb.tb_frame.f_code.co_name == "cmd":
+            shown = {k: repr(v) for k, v in tb.tb_frame.f_locals.items()}
+            assert not any(key in v for v in shown.values()), shown
+            assert "line_sent" in shown
+        tb = tb.tb_next

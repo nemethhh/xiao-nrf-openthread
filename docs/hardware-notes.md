@@ -181,4 +181,8 @@ Measured facts about the boards and links. Newest entries at the bottom of each 
 - Provisioned permanently with `python -m tools.ha_join xiao52 --router`: router on `ha-thread-a98e`, channel 15, rloc16
   0xd000. After a further `ot reset` it was a router again within 2 s. The DK was left factory-reset (`disabled` after an
   SWD reset).
+- Review fixes (same day): `tests/ha/test_xiao52_router.py` now needs `XIAO52_ALLOW_DEPROVISION=1` and re-provisions the
+  board as a router at the end; the headless test asserts the by-id port vanished within 5 s of `ot reset`. Opted-in run
+  5/5 (router after 9 s, back as child after 2 s, DK ping 10/10, headless reachable at 10 s), finalizer left it a router
+  on `ha-thread-a98e`, rloc16 0xe000 (the factory resets give it a new mleid each time). DK e2e 3/3 again.
 - Power loss on a USB charger (no host at all): PENDING, `docs/checklist.md`, "XIAO nRF52840 router: power loss on a USB charger".

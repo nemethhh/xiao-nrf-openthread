@@ -20,16 +20,25 @@ The reset variant of this (SWD reset instead of power loss) is automated and pas
 ## XIAO nRF52840 router: power loss on a USB charger
 
 Status: PENDING (needs a physical unplug). The board runs `router-xiao52` and is provisioned into HA's network
-(`python -m tools.ha_join xiao52 --router`); reset and headless rejoin are automated and pass
-(`tests/ha/test_xiao52_router.py`, see `docs/hardware-notes.md`, "XIAO nRF52840 as a Thread router").
+(`python -m tools.ha_join xiao52 --router`); reset and headless rejoin with the host's port closed are automated and
+pass (`tests/ha/test_xiao52_router.py`, see `docs/hardware-notes.md`, "XIAO nRF52840 as a Thread router"). This check
+covers the one case they cannot: power loss, then running with no USB host at all.
 
-1. Unplug the XIAO nRF52840 from this PC and plug it into a USB charger (no host at all) for at least 3 minutes.
-2. Plug it back into this PC. Within a few seconds: `.venv/bin/python -m tools.ha_join xiao52 --dry-run` must say
-   "already on 'ha-thread-a98e': no dataset written" with state `router` (or `child` right after the replug: the USB
-   power drops for a moment).
-3. Optional, while it is still on the charger: join the DK (`.venv/bin/python -m tools.ha_join dk`), ping the
-   nRF52840's mleid (printed by `ha_join`) with `ot ping <mleid>` on the DK shell, then `ot factoryreset` the DK.
-4. Record pass/fail and the date in `docs/hardware-notes.md`.
+**Pass criterion: step 3, the DK pings the nRF52840 while it is on the charger.** Re-plugging it into the PC (step 5)
+only shows that the settings persisted, not that it works without a host.
+
+1. With the board on this PC, note its mesh-local EID (stable across reboots):
+   `.venv/bin/python -c "from tests.otcli import OtCli; from tools import fw; c = OtCli(fw.BOARDS['xiao52'].serial_port); print(c.cmd('ipaddr mleid')[0]); c.close()"`
+2. Unplug the XIAO nRF52840 from this PC and plug it into a USB charger (no host at all). Wait at least 3 minutes.
+3. MANDATORY, while it is still on the charger: join the DK to HA's network and ping that address 10 times:
+   `.venv/bin/python -m tools.ha_join dk`, then
+   `.venv/bin/python -c "from tests.otcli import OtCli; from tools import fw; c = OtCli(fw.BOARDS['dk'].serial_port); print(c.cmd('ping <mleid> 64 10 1', timeout=40)); c.close()"`.
+   Pass: at least 9 of 10 received.
+4. Factory-reset the DK so HA's network key does not stay on it:
+   `.venv/bin/python -c "from tests.otcli import OtCli; from tools import fw; c = OtCli(fw.BOARDS['dk'].serial_port); c.factory_reset(); c.close()"`
+5. Plug the nRF52840 back into this PC (optional). `.venv/bin/python -m tools.ha_join xiao52 --dry-run` should say
+   "already on 'ha-thread-a98e': no dataset written" (state `child` right after the replug, `router` soon after).
+6. Record pass/fail, the ping result and the date in `docs/hardware-notes.md`.
 
 ## Sniffer
 

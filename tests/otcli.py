@@ -112,7 +112,7 @@ class OtCli:
         except PORT_ERRORS as e:
             raise self._lost(e) from None
         self._buf = ""
-        line_sent = f"ot {command}"
+        line_sent = "ot " + command  # not an f-string: keeps a Secret command (tools.ha.Secret) redacted
         try:  # inline, not self._write(data): a traceback would print that frame's argument, the key for dataset commands
             ser.write(f"{line_sent}\r\n".encode())
         except PORT_ERRORS as e:

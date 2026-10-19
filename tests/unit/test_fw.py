@@ -197,8 +197,12 @@ def test_uf2_bootloader_commands_set_gpregret_magic_then_reset():
     assert fw.uf2_bootloader_commands() == ["devmem 0x4000051c 32 0x57", "devmem 0xe000ed0c 32 0x5fa0004"]
 
 
-def uf2_env(tmp_path, monkeypatch, *, port_exists=True, drive_after=0):
-    """Fake board port, lsblk/udisksctl and the XIAO drive that appears after `drive_after` polls."""
+def uf2_env(tmp_path, monkeypatch, *, port_exists=True, drive_after=0, readback=0x57, open_error=None,
+            reset_write_error=None):
+    """Fake board port, lsblk/udisksctl and the XIAO drive that appears after `drive_after` polls.
+
+    `readback` is what `devmem 0x4000051c` reports; `open_error` is raised by opening the port;
+    `reset_write_error` by writing the reset line (the board resetting under the write)."""
     monkeypatch.setattr(fw, "REPO", tmp_path)
     monkeypatch.setattr(fw, "MEDIA_ROOT", tmp_path / "media")
     monkeypatch.setattr(fw.time, "sleep", lambda s: None)
@@ -213,7 +217,9 @@ def uf2_env(tmp_path, monkeypatch, *, port_exists=True, drive_after=0):
 
     class FakeSerial:
         def __init__(self, *a, **kw):
-            pass
+            if open_error:
+                raise open_error
+            log["closed"] = False
 
         rx = b""
 
@@ -222,7 +228,12 @@ def uf2_env(tmp_path, monkeypatch, *, port_exists=True, drive_after=0):
             if line:
                 log["written"].append(line)
             if line == "devmem 0x4000051c":  # read-back of GPREGRET after the write
-                self.rx += b"devmem 0x4000051c\r\nUsing data width 32\r\nRead value 0x57\r\n"
+                self.rx += f"devmem 0x4000051c\r\nUsing data width 32\r\nRead value {readback:#x}\r\n".encode()
+            if reset_write_error and line.startswith("devmem 0xe000ed0c"):
+                raise reset_write_error
+
+        def close(self):
+            log["closed"] = True
 
         def read(self, n=1):
             out, self.rx = self.rx[:n], self.rx[n:]
@@ -278,3 +289,30 @@ def test_flash_uf2_gives_up_with_double_tap_hint(tmp_path, monkeypatch):
     log, _ = uf2_env(tmp_path, monkeypatch, port_exists=False, drive_after=10**9)
     with pytest.raises(SystemExit, match="Double-tap"):
         fw.flash(TARGETS["router-xiao52"])
+
+
+def test_failed_gpregret_readback_clears_the_magic_and_does_not_reset(tmp_path, monkeypatch):
+    """GPREGRET survives soft resets and sys_arch_reboot (NCS v3.4.1) does not touch it: a 0x57 left behind would
+    drop the permanent router into UF2 mode at its next `ot reset` or fault reset."""
+    log, _ = uf2_env(tmp_path, monkeypatch, readback=0x0, drive_after=10**9)
+    with pytest.raises(SystemExit, match="Double-tap"):
+        fw.flash(TARGETS["router-xiao52"])
+    set_magic, reset = fw.uf2_bootloader_commands()
+    assert reset not in log["written"]
+    assert log["written"][-1] == "devmem 0x4000051c 32 0x0"
+    assert log["closed"]
+
+
+def test_uf2_entry_port_open_errors_propagate(tmp_path, monkeypatch):
+    """Permission denied / port busy is not "the port vanished with the reset": report it, do not wait for a drive."""
+    uf2_env(tmp_path, monkeypatch, open_error=PermissionError(13, "Permission denied"))
+    with pytest.raises(PermissionError):
+        fw.flash(TARGETS["router-xiao52"])
+
+
+def test_uf2_entry_tolerates_port_vanishing_under_the_reset_write(tmp_path, monkeypatch):
+    import serial
+
+    log, copied = uf2_env(tmp_path, monkeypatch, drive_after=1, reset_write_error=serial.SerialException("gone"))
+    fw.flash(TARGETS["router-xiao52"])
+    assert copied.exists()
