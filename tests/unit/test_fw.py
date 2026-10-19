@@ -145,3 +145,53 @@ def test_build_cmd_rcp_usb_fallback_uses_cdc_conf_and_no_baud():
     assert "baud-" not in overlay_arg(argv)  # USB CDC has no baud rate
     with pytest.raises(ValueError):
         build_cmd(TARGETS["rcp-xiao52"], baud=115200)
+
+
+def test_router_xiao52_target_builds_thread_cli_for_xiao_ble():
+    t = TARGETS["router-xiao52"]
+    assert (t.app, t.board_target, t.board) == ("apps/thread-cli", "xiao_ble", "xiao52")
+    argv = build_cmd(t)
+    assert argv[argv.index("-d") + 1] == "build/router-xiao52"
+    assert any(a.endswith("apps/thread-cli") for a in argv)
+    # USB console config lives in the app's board file (picked up automatically for xiao_ble), not in NCS.
+    assert (fw.REPO / "apps/thread-cli/boards/xiao_ble_nrf52840.conf").exists()
+    with pytest.raises(ValueError):
+        build_cmd(t, antenna="external")  # no RF switch on the XIAO nRF52840
+
+
+def test_sniffer_xiao52_target_kept():
+    assert TARGETS["sniffer-xiao52"].board_target == "xiao_ble"
+
+
+def test_flash_uf2_tolerates_drive_vanishing_after_copy(tmp_path, monkeypatch):
+    """The UF2 bootloader flashes and reboots as soon as the image is written, so the drive is gone
+    before shutil.copy's chmod step (FileNotFoundError seen live). Only the data copy matters."""
+    monkeypatch.setattr(fw, "REPO", tmp_path)
+    monkeypatch.setattr(fw, "MEDIA_ROOT", tmp_path / "media")
+    image = tmp_path / "build/router-xiao52/thread-cli/zephyr/zephyr.uf2"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"UF2\n" * 4)
+    drive = tmp_path / "media/XIAO-SENSE"
+    drive.mkdir(parents=True)
+
+    def vanished(*a, **kw):
+        raise FileNotFoundError("drive gone")
+
+    monkeypatch.setattr(shutil, "copymode", vanished)
+    monkeypatch.setattr(shutil, "copystat", vanished)
+    fw.flash(TARGETS["router-xiao52"])
+    assert (drive / "zephyr.uf2").read_bytes() == image.read_bytes()
+
+
+def test_flash_uf2_without_drive_exits_with_hint(tmp_path, monkeypatch):
+    monkeypatch.setattr(fw, "MEDIA_ROOT", tmp_path / "media")
+    with pytest.raises(SystemExit, match="Double-tap"):
+        fw.flash(TARGETS["router-xiao52"])
+
+
+def test_xiao52_board_is_the_router_port_and_sniffer_port_is_kept():
+    assert BOARDS["xiao52"].serial_port == (
+        "/dev/serial/by-id/usb-Seeed_Studio_XIAO_nRF52840_Thread_Router_B46C2A1C09259A32-if00"
+    )
+    assert BOARDS["xiao52"].probe == "uf2"
+    assert fw.XIAO52_SNIFFER_PORT.endswith("usb-Nordic_Semiconductor_ASA_nRF_802154_Sniffer_B46C2A1C09259A32-if00")

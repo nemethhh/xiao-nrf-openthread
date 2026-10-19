@@ -54,21 +54,27 @@ BOARDS: dict[str, Board] = {
         "AA2C939D",
     ),
     "dk": Board("dk", "/dev/serial/by-id/usb-SEGGER_J-Link_001057713759-if02", "jlink", "001057713759"),
-    # Port the 802154_sniffer firmware presents (VID 1915:154b, "Nordic Semiconductor ASA" / "nRF 802154 Sniffer",
-    # serial from HWINFO = the chip's device id); verified after flashing (docs/hardware-notes.md).
+    # Port the router-xiao52 firmware presents (thread-cli shell over USB CDC ACM, VID:PID 2fe3:0004, strings from
+    # apps/thread-cli/boards/xiao_ble_nrf52840.conf, serial = the chip's HWINFO device id); verified after flashing.
     "xiao52": Board(
         "xiao52",
-        "/dev/serial/by-id/usb-Nordic_Semiconductor_ASA_nRF_802154_Sniffer_B46C2A1C09259A32-if00",
+        "/dev/serial/by-id/usb-Seeed_Studio_XIAO_nRF52840_Thread_Router_B46C2A1C09259A32-if00",
         "uf2",
         None,
     ),
 }
+
+# Port of the same XIAO nRF52840 while it runs sniffer-xiao52 (VID 1915:154b); verified 2026-10-19. The board's
+# permanent role is the Thread router, so BOARDS["xiao52"] holds the router port; re-flash the sniffer to use this.
+XIAO52_SNIFFER_PORT = "/dev/serial/by-id/usb-Nordic_Semiconductor_ASA_nRF_802154_Sniffer_B46C2A1C09259A32-if00"
 
 TARGETS: dict[str, Target] = {
     "router-xiao54": Target("router-xiao54", "apps/thread-cli", "xiao_nrf54l15/nrf54l15/cpuapp", "xiao54"),
     "node-dk": Target("node-dk", "apps/thread-cli", "nrf54l15dk/nrf54l15/cpuapp", "dk"),
     "rcp-xiao54": Target("rcp-xiao54", "apps/rcp", "xiao_nrf54l15/nrf54l15/cpuapp", "xiao54"),
     "sniffer-xiao52": Target("sniffer-xiao52", "$NCS/nrf/samples/peripheral/802154_sniffer", "xiao_ble", "xiao52"),
+    # Permanent Thread router in Home Assistant's network; USB CDC ACM console from apps/thread-cli/boards/xiao_ble_nrf52840.conf.
+    "router-xiao52": Target("router-xiao52", "apps/thread-cli", "xiao_ble", "xiao52"),
     "rcp-xiao52": Target("rcp-xiao52", "apps/rcp", "xiao_ble", "xiao52", confs=("apps/rcp/overlays/usb-cdc.conf",)),
 }
 
@@ -219,13 +225,19 @@ def flash(target: Target, *, erase_settings: bool = False) -> None:
     run(flash_cmd(board, hex_path(target), erase_range=erase_range), flash_env(board))
 
 
+# Where udisks mounts the XIAO nRF52840's UF2 drive (label XIAO-SENSE; `udisksctl mount -b /dev/sdX`).
+MEDIA_ROOT = Path("/run/media", os.environ.get("USER", ""))
+
+
 def _flash_uf2(target: Target) -> None:
     uf2 = _image_dir(target) / "zephyr.uf2"
-    volumes = sorted(Path("/run/media", os.environ.get("USER", "")).glob("XIAO*"))
+    volumes = sorted(MEDIA_ROOT.glob("XIAO*"))
     if not volumes:
         sys.exit(f"Double-tap reset on the XIAO nRF52840 so its UF2 drive mounts, then rerun. Image: {uf2}")
     print(f"+ cp {uf2} {volumes[0]}", flush=True)
-    shutil.copy(uf2, volumes[0])
+    # Data only: the bootloader flashes and reboots once the image is written, so the drive is gone
+    # before shutil.copy could set permissions on the copy (FileNotFoundError seen live).
+    shutil.copyfile(uf2, volumes[0] / uf2.name)
 
 
 def reset(board: Board) -> None:
