@@ -24,10 +24,53 @@ class OtError(RuntimeError):
         self.code = code
 
 
+class PortLost(TimeoutError):
+    """The serial port vanished (a native-USB board rebooting and re-enumerating). A TimeoutError, so
+    callers that already retry lost commands (wait_state, factory_reset) retry this too."""
+
+
 class OtCli:
+    """`port` may disappear and come back: boards on native USB (XIAO nRF52840) re-enumerate on every
+    reboot. A lost port is reopened by the next command; until then commands raise PortLost."""
+
     def __init__(self, port: str, baudrate: int = 115200, *, serial_factory: Callable = serial.Serial):
+        self._port = port
+        self._baudrate = baudrate
+        self._factory = serial_factory
         self._ser = serial_factory(port, baudrate=baudrate, timeout=0.05)
         self._buf = ""
+
+    def _serial(self):
+        if self._ser is None:
+            try:
+                self._ser = self._factory(self._port, baudrate=self._baudrate, timeout=0.05)
+            except OSError as e:  # serial.SerialException is an OSError
+                time.sleep(0.5)  # the device is still re-enumerating
+                raise PortLost(f"serial port not back yet: {type(e).__name__}") from None
+            self._buf = ""
+        return self._ser
+
+    def _lost(self, e: OSError) -> PortLost:
+        try:
+            self._ser.close()
+        except OSError:
+            pass
+        self._ser = None
+        return PortLost(f"serial port lost: {type(e).__name__}")
+
+    def _write(self, data: bytes) -> None:
+        ser = self._serial()
+        try:
+            ser.write(data)
+        except OSError as e:
+            raise self._lost(e) from None
+
+    def _read_chunk(self) -> bytes:
+        ser = self._serial()
+        try:
+            return ser.read(ser.in_waiting or 1)
+        except OSError as e:
+            raise self._lost(e) from None
 
     def _next_line(self, deadline: float) -> str | None:
         """Return the next cleaned, complete line, or None once the deadline passes."""
@@ -37,17 +80,21 @@ class OtCli:
                 return PROMPT.sub("", ORPHAN_SGR.sub("", ANSI.sub("", raw))).strip()
             if time.monotonic() >= deadline:
                 return None
-            chunk = self._ser.read(self._ser.in_waiting or 1)
+            chunk = self._read_chunk()
             if chunk:
                 self._buf += chunk.decode(errors="replace")
             else:
                 time.sleep(0.01)
 
     def cmd(self, command: str, timeout: float = 10.0) -> list[str]:
-        self._ser.reset_input_buffer()
+        ser = self._serial()
+        try:
+            ser.reset_input_buffer()
+        except OSError as e:
+            raise self._lost(e) from None
         self._buf = ""
         line_sent = f"ot {command}"
-        self._ser.write(f"{line_sent}\r\n".encode())
+        self._write(f"{line_sent}\r\n".encode())
         deadline = time.monotonic() + timeout
         out: list[str] = []
         while (line := self._next_line(deadline)) is not None:
@@ -100,13 +147,22 @@ class OtCli:
                 continue  # shell not up yet
             if sent and state == ["disabled"]:
                 return
-            self._ser.write(b"ot factoryreset\r\n")
+            try:
+                self._write(b"ot factoryreset\r\n")
+            except PortLost:
+                continue
             sent = True
             time.sleep(2)  # let the reboot happen before asking again
         raise TimeoutError("node did not come back after factoryreset")
 
+    def reboot(self) -> None:
+        """`ot reset`: reboot the node without waiting for it (no reply comes back before the reboot)."""
+        self._write(b"ot reset\r\n")
+
     def close(self) -> None:
-        self._ser.close()
+        if self._ser is not None:
+            self._ser.close()
+            self._ser = None
 
 
 NETDATA_SECTIONS = {"Prefixes:", "Routes:", "Services:", "Contexts:", "Commissioning:"}

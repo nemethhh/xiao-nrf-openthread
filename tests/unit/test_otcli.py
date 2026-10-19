@@ -191,3 +191,89 @@ def test_cmd_tolerates_truncated_prompt_escape_before_echo():
 def test_cmd_tolerates_truncated_prompt_escape_with_semicolon():
     cli = cli_with({"ot ipaddr mleid": "1;32muart:~$ \x1b[mot ipaddr mleid\r\nfdde:ad00:beef:0:8c58:70b9:dafd:7c23\r\nDone\r\n"})
     assert cli.cmd("ipaddr mleid") == ["fdde:ad00:beef:0:8c58:70b9:dafd:7c23"]
+
+
+class UsbBoard:
+    """A board on native USB (XIAO nRF52840): a reboot makes its tty vanish and come back.
+
+    `open()` is the serial factory. After `ot factoryreset` / `ot reset` the open port dies (reads and
+    writes raise SerialException, as pyserial does once the device is gone) and the next `gone_opens`
+    attempts to reopen fail, as while the device re-enumerates.
+    """
+
+    def __init__(self, state="router", gone_opens=2):
+        self.state = state
+        self.gone_opens = gone_opens
+        self.pending_gone = 0
+        self.opens = 0
+        self.ports: list = []
+        self.written: list[str] = []
+
+    def open(self, *a, **kw):
+        import serial
+
+        if self.pending_gone:
+            self.pending_gone -= 1
+            raise serial.SerialException("could not open port: No such file or directory")
+        self.opens += 1
+        board = self
+
+        class Port(FakeSerial):
+            dead = False
+
+            def _check(self):
+                if self.dead:
+                    raise serial.SerialException("device reports readiness to read but returned no data")
+
+            def write(self, data):
+                self._check()
+                line = data.decode().strip()
+                board.written.append(line)
+                if line in ("ot factoryreset", "ot reset"):
+                    if line == "ot factoryreset":
+                        board.state = "disabled"
+                    board.pending_gone = board.gone_opens
+                    for p in board.ports:
+                        p.dead = True
+                elif line == "ot state":
+                    self._rx += f"ot state\r\n{board.state}\r\nDone\r\n".encode()
+                return len(data)
+
+            def read(self, n=1):
+                self._check()
+                return super().read(n)
+
+            @property
+            def in_waiting(self):
+                self._check()
+                return len(self._rx)
+
+        port = Port({})
+        self.ports.append(port)
+        return port
+
+
+def test_factory_reset_survives_usb_reenumeration():
+    board = UsbBoard()
+    cli = OtCli("usb", serial_factory=board.open)
+    cli.factory_reset(timeout=20)
+    assert board.state == "disabled"
+    assert board.opens >= 2  # reopened after the port vanished
+    assert cli.cmd("state") == ["disabled"]
+
+
+def test_wait_state_survives_usb_reboot():
+    board = UsbBoard(state="child")
+    cli = OtCli("usb", serial_factory=board.open)
+    cli.reboot()
+    assert "ot reset" in board.written
+    assert cli.wait_state({"child", "router"}, 20, poll_timeout=0.2) == "child"
+    assert board.opens == 2
+
+
+def test_port_lost_is_a_timeout_error():
+    board = UsbBoard(gone_opens=100)
+    cli = OtCli("usb", serial_factory=board.open)
+    cli.reboot()
+    with pytest.raises(TimeoutError):
+        cli.cmd("state", timeout=0.5)
