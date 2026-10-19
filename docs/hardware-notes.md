@@ -80,3 +80,11 @@ Measured facts about the boards and links. Newest entries at the bottom of each 
   + 100 x 1000 B at 0.5 s (fragmented) = 700/700 received (0.00% loss); container `RestartCount 0`, running; no RCP/Spinel
   reset/restore/fail/timeout lines in the OTBR log (672 s). Evidence: `build/soak-460800.txt`. No need to test 115200 or lower `RCP_BAUD`
   (`tools/fw.py` keeps `RCP_BAUD = 460800`). The soak is the single 12-minute run; longer-term stability is for Task 8 on HA.
+
+## Home Assistant baseline (read-only, "before XIAO", 2026-10-19)
+- HA at `http://192.168.50.10` (port 80), Core 2026.10.2; Supervisor calls work via WebSocket `supervisor/api` (`python -m tools.ha ...`).
+- `python -m tools.ha serial`: **no serial devices with a `by_id` path** (empty list). Hardware info has 77 devices; the only tty nodes are
+  `/dev/ttyS0`..`ttyS3` (onboard UARTs, no by-id).
+- Add-on `core_openthread_border_router` 3.3.0 (latest 3.3.0) is **already installed**, state `stopped`, boot `auto`; options currently:
+  `device: null`, `baudrate: "460800"`, `flow_control: true`, `otbr_log_level: notice`, `firewall: true`, `nat64: false`, `beta: false`.
+- `thread/list_datasets` -> `unknown_command` (thread integration not loaded).
