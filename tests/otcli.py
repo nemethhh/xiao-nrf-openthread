@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
 import time
 from typing import Callable
@@ -12,6 +13,8 @@ ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 PROMPT = re.compile(r"uart:~\$ ?")  # also redrawn mid-line around asynchronous output
 LOG_LINE = re.compile(r"^\[\d\d:\d\d:\d\d\.\d{3},\d{3}\] <\w+>")
 ERROR = re.compile(r"^Error (\d+): (.*)$")
+# Commands whose text or output can carry the network key: never echo them in exceptions.
+SECRET_COMMANDS = ("dataset", "networkkey")
 
 
 class OtError(RuntimeError):
@@ -54,6 +57,9 @@ class OtCli:
             if m := ERROR.match(line):
                 raise OtError(int(m.group(1)), m.group(2))
             out.append(line)
+        if command.split()[0] in SECRET_COMMANDS:
+            shown = " ".join(line_sent.split()[:3]) + " ..."
+            raise TimeoutError(f"no 'Done' for {shown!r} within {timeout}s ({len(out)} lines of output withheld)")
         raise TimeoutError(f"no 'Done' for {line_sent!r} within {timeout}s; got {out}")
 
     def read_until(self, pattern: str, timeout: float) -> re.Match:
@@ -100,3 +106,27 @@ class OtCli:
 
     def close(self) -> None:
         self._ser.close()
+
+
+NETDATA_SECTIONS = {"Prefixes:", "Routes:", "Services:", "Contexts:", "Commissioning:"}
+
+
+def onmesh_prefixes(netdata: list[str]) -> list[ipaddress.IPv6Network]:
+    """On-mesh prefixes (flag `o`) from the `Prefixes:` section of `ot netdata show` output.
+
+    Prefix lines read `<prefix>/<len> <flags> <preference> <rloc16>`, e.g. `fd76:a5d1:fcb0:1707::/64 paos low 5800`.
+    """
+    section, out = None, []
+    for line in netdata:
+        if line in NETDATA_SECTIONS:
+            section = line
+            continue
+        fields = line.split()
+        if section == "Prefixes:" and len(fields) >= 4 and "o" in fields[1]:
+            out.append(ipaddress.IPv6Network(fields[0], strict=False))
+    return out
+
+
+def mesh_local_net(mleid: list[str]) -> ipaddress.IPv6Network:
+    """The mesh-local /64 from `ot ipaddr mleid` output (an address in the mesh-local prefix)."""
+    return ipaddress.IPv6Network(f"{mleid[0].strip()}/64", strict=False)

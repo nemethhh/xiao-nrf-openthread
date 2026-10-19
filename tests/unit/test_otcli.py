@@ -1,6 +1,8 @@
+import ipaddress
+
 import pytest
 
-from tests.otcli import OtCli, OtError
+from tests.otcli import OtCli, OtError, mesh_local_net, onmesh_prefixes
 
 
 class FakeSerial:
@@ -122,3 +124,59 @@ def test_cmd_strips_prompt_reprinted_inside_async_output():
         "Doneuart:~$ \r\n"
     })
     assert cli.cmd("ping x") == ["16 bytes from fd00::1: icmp_seq=1", "1 packets transmitted, 1 packets received."]
+
+
+KEY = "00112233445566778899aabbccddeeff"
+
+
+def test_cmd_timeout_keeps_partial_output_for_ordinary_commands():
+    cli = cli_with({"ot state": "leader\r\n"})
+    with pytest.raises(TimeoutError) as exc:
+        cli.cmd("state", timeout=0.2)
+    assert "leader" in str(exc.value)
+
+
+def test_cmd_timeout_hides_dataset_output():
+    """`dataset active` prints the network key; a timeout must not carry it into pytest output."""
+    cli = cli_with({"ot dataset active": f"Active Timestamp: 1\r\nNetwork Key: {KEY}\r\n"})
+    with pytest.raises(TimeoutError) as exc:
+        cli.cmd("dataset active", timeout=0.2)
+    assert KEY not in str(exc.value)
+    assert "dataset" in str(exc.value)
+
+
+def test_cmd_timeout_hides_dataset_command_arguments():
+    tlvs = "0e080000000000010000" + KEY
+    cli = cli_with({})
+    with pytest.raises(TimeoutError) as exc:
+        cli.cmd(f"dataset set active {tlvs}", timeout=0.2)
+    assert tlvs not in str(exc.value) and KEY not in str(exc.value)
+
+
+NETDATA = [
+    "Prefixes:",
+    "fd76:a5d1:fcb0:1707::/64 paos low 5800",
+    "fd00:dead:beef:cafe::/64 paros med dc00",
+    "Routes:",
+    "fd49:7770:7fc5:0::/64 s med 4000",
+    "::/0 s med 4000",
+    "Services:",
+    "44970 5d c000 s 4000",
+    "Contexts:",
+    "fd76:a5d1:fcb0:1707::/64 1 c",
+]
+
+
+def test_onmesh_prefixes_reads_only_prefix_section_with_o_flag():
+    assert onmesh_prefixes(NETDATA) == [
+        ipaddress.IPv6Network("fd76:a5d1:fcb0:1707::/64"),
+        ipaddress.IPv6Network("fd00:dead:beef:cafe::/64"),
+    ]
+
+
+def test_onmesh_prefixes_ignores_prefix_without_o_flag_and_routes():
+    assert onmesh_prefixes(["Prefixes:", "fd11::/64 pas med 1000", "Routes:", "fd22::/64 s med 4000"]) == []
+
+
+def test_mesh_local_net_from_mleid():
+    assert mesh_local_net(["fdde:ad00:beef:0:558:f56b:d688:799"]) == ipaddress.IPv6Network("fdde:ad00:beef::/64")

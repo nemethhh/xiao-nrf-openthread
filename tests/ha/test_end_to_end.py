@@ -8,7 +8,7 @@ import time
 import pytest
 
 from tests.conftest import ensure_flashed
-from tests.otcli import OtError
+from tests.otcli import OtError, mesh_local_net, onmesh_prefixes
 from tools.ha import OTBR_SLUG
 
 pytestmark = [pytest.mark.ha, pytest.mark.hw]
@@ -49,9 +49,8 @@ def joined(ha, preferred, ha_dataset_hex, dk_image, dk):
 
 
 def global_addrs(dk) -> list[ipaddress.IPv6Address]:
-    ml = ipaddress.ip_network(
-        re.search(r"Mesh Local Prefix:\s*(\S+)", " ".join(dk.cmd("dataset active"))).group(1), strict=False
-    )
+    """Addresses outside the mesh-local /64 and fe80::/10. Never reads `dataset active` (it prints the network key)."""
+    ml = mesh_local_net(dk.cmd("ipaddr mleid"))
     out = []
     for line in dk.cmd("ipaddr"):
         try:
@@ -76,17 +75,19 @@ def nat64_ping(dk, count: int = 5) -> tuple[int, int]:
 
 
 def test_dk_joins_ha_network(joined, preferred):
-    assert preferred["network_name"] in " ".join(joined.cmd("dataset active"))
+    # Compare name and extended PAN ID only: `dataset active` output contains the network key.
+    assert joined.cmd("networkname") == [preferred["network_name"]]
+    assert [x.lower() for x in joined.cmd("extpanid")] == [preferred["extended_pan_id"].lower()]
 
 
 def test_dk_has_omr_address(joined):
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline and not global_addrs(joined):
         time.sleep(3)
-    assert global_addrs(joined), "no OMR address (outside mesh-local and fe80::/10) within 60 s"
-    assert "border router" in " ".join(joined.cmd("netdata show")).lower() or any(
-        re.match(r"\s*[0-9a-f:]+/\d+ ", l) for l in joined.cmd("netdata show")
-    )
+    addrs = global_addrs(joined)
+    assert addrs, "no OMR address (outside mesh-local and fe80::/10) within 60 s"
+    prefixes = onmesh_prefixes(joined.cmd("netdata show"))
+    assert any(a in p for a in addrs for p in prefixes), f"no address in {addrs} lies in an on-mesh prefix {prefixes}"
 
 
 def test_dk_pings_lan_ipv4_via_nat64(joined):
