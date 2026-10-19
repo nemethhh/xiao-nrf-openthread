@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import warnings
 
 import pytest
 
@@ -74,10 +75,18 @@ def form_network(cli: OtCli, name: str) -> str:
 
 
 def _cli(board: str):
+    """Factory-reset before and after the test, so no network (e.g. Home Assistant's key) stays in flash.
+
+    The reset afterwards is best effort: a failure there only warns, never hiding the test's own result.
+    """
     cli = OtCli(fw.BOARDS[board].serial_port)
     try:
         cli.factory_reset()
         yield cli
+        try:
+            cli.factory_reset()
+        except Exception as e:  # noqa: BLE001 - teardown must not mask the test outcome
+            warnings.warn(f"{board}: factory reset after the test failed: {type(e).__name__}: {e}", stacklevel=1)
     finally:
         cli.close()
 
