@@ -84,25 +84,49 @@ def test_dk_joins_otbr_network(otbr, dk):
     assert sent == 20 and received >= 19, (sent, received)
 
 
+def container_state() -> str:
+    r = subprocess.run(
+        ["docker", "inspect", "-f", "{{.RestartCount}} {{.State.Running}}", "otbr-local"], capture_output=True, text=True
+    )
+    return r.stdout.strip() if r.returncode == 0 else f"unavailable ({r.stderr.strip()})"
+
+
 @pytest.mark.soak
 def test_serial_soak(otbr, dk):
-    addr = join_dk(dk)
-    stats = []
-    for size, count, interval in ((64, 600, 1), (1000, 100, 0.5)):
-        sent, received = ping(dk, addr, size, count, interval)
-        stats.append((size, sent, received))
-    sent = sum(s for _, s, _ in stats)
-    received = sum(r for _, _, r in stats)
-    loss = 100 * (sent - received) / sent
-    state = subprocess.run(
-        ["docker", "inspect", "-f", "{{.RestartCount}} {{.State.Running}}", "otbr-local"],
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
-    bad = [line for line in otbr_logs().splitlines() if BAD_LOG.search(line)]
-    report = [f"baud {BAUD}", f"loss {loss:.2f}% ({received}/{sent})", f"container {state}"]
-    report += [f"ping size {s}: {r}/{n} received" for s, n, r in stats]
-    report += ["suspicious log lines:", *bad]
-    Path(fw.REPO / "build" / f"soak-{BAUD}.txt").write_text("\n".join(report) + "\n")
+    """Pings through the RCP; the evidence file is written even when a step raises."""
+    stats: list[tuple[int, int, int]] = []  # (size, sent, received), appended per phase
+    error = None
+    try:
+        addr = join_dk(dk)
+        for size, count, interval in ((64, 600, 1), (1000, 100, 0.5)):
+            sent, received = ping(dk, addr, size, count, interval)
+            stats.append((size, sent, received))
+    except BaseException as e:  # noqa: BLE001 - recorded in the evidence file, then re-raised
+        error = e
+        raise
+    finally:
+        sent = sum(n for _, n, _ in stats)
+        received = sum(r for _, _, r in stats)
+        state = container_state()
+        try:
+            logs = otbr_logs()
+        except Exception as e:  # noqa: BLE001
+            logs = ""
+            error = error or e
+        bad = [line for line in logs.splitlines() if BAD_LOG.search(line)]
+        # s6 restarts otbr-agent inside the container on exit codes 0 and 5 (e.g. a tty I/O error), which leaves
+        # RestartCount 0 and Running true, so count the agent's starts and exits in the log as well.
+        starts = logs.count("Starting otbr-agent...")
+        exits = [line for line in logs.splitlines() if "otbr-agent exited with code" in line]
+        loss = 100 * (sent - received) / sent if sent else 100.0
+        report = [f"baud {BAUD}", f"loss {loss:.2f}% ({received}/{sent})", f"container {state}"]
+        report += [f"ping size {sz}: {r}/{n} received" for sz, n, r in stats]
+        report += [f"otbr-agent starts in log: {starts}", f"otbr-agent exit lines: {len(exits)}", *exits]
+        report += [f"error: {error!r}"] if error else []
+        report += ["suspicious log lines:", *bad]
+        Path(fw.REPO / "build" / f"soak-{BAUD}.txt").write_text("\n".join(report) + "\n")
+    assert len(stats) == 2, report
     assert loss <= 1.0, report
     assert state == "0 true", report
+    assert starts == 1 and not exits, report
     assert not bad, report
