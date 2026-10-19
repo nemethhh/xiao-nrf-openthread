@@ -45,6 +45,26 @@ def read_gpio_p2_out(name: str) -> int:
     return read_gpio_p2(name, P2_OUT)
 
 
+RFSW_PWR_BIT = 1 << 3  # P2.3, active high: powers the XIAO's RF switch
+RFSW_CTL_BIT = 1 << 5  # P2.5, active low: low selects the internal ceramic antenna, high the U.FL
+
+
+def assert_antenna_pin(external: bool, name: str = "xiao54") -> None:
+    """The XIAO's RF switch must be powered (P2.3) and set (P2.5), both driven as outputs.
+
+    OUT alone is not proof (low is the reset value), so DIR must have both bits set as well.
+    """
+    direction, out = read_gpio_p2(name, P2_DIR), read_gpio_p2_out(name)
+    regs = f"P2 OUT={out:#x} DIR={direction:#x}"
+    assert direction & RFSW_PWR_BIT, f"P2.3 is not an output: RF switch not powered ({regs})"
+    assert out & RFSW_PWR_BIT, f"P2.3 is low: RF switch not powered ({regs})"
+    assert direction & RFSW_CTL_BIT, f"P2.5 is not an output: RF switch not driven ({regs})"
+    high = bool(out & RFSW_CTL_BIT)
+    assert high == external, (
+        f"P2.5 is {'high' if high else 'low'} but the build is {'external' if external else 'internal'} ({regs})"
+    )
+
+
 def form_network(cli: OtCli, name: str) -> str:
     """Form a new network on `cli`, wait until it leads, and return the active dataset as hex."""
     for c in ("dataset init new", f"dataset networkname {name}", "dataset commit active", "ifconfig up", "thread start"):

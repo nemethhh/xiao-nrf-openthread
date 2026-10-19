@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import ensure_flashed
+from tests.conftest import assert_antenna_pin, ensure_flashed
 from tools import fw
 
 pytestmark = pytest.mark.hw
@@ -67,6 +67,12 @@ def ping(dk, addr: str, size: int, count: int, interval: float) -> tuple[int, in
     m = PING_RE.search(out)
     assert m, out
     return int(m.group(1)), int(m.group(2))
+
+
+def test_rcp_drives_rf_switch_to_internal_antenna():
+    """The RCP image must power the RF switch (P2.3 high) and select the ceramic antenna (P2.5 low)."""
+    ensure_flashed("rcp-xiao54", baud=BAUD)
+    assert_antenna_pin(external=False)
 
 
 def test_otbr_sees_rcp_version(otbr):
