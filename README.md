@@ -45,6 +45,11 @@ toolchain with `ZEPHYR_BASE=~/ncs/<version>/zephyr` set (`tools/fw.py` does this
 | `sniffer-xiao52` | XIAO nRF52840 | 802.15.4 sniffer | UF2 flash after reset double-tap |
 | `rcp-xiao52` | XIAO nRF52840 | fallback RCP over USB CDC ACM | UF2; untested on hardware |
 
+Flashing keeps the settings partition (a stored Thread network survives). `python -m tools.fw flash <target> --erase-settings`
+also fills the settings partition with 0xff and reads it back first (SWD targets only; verified on the DK: the node comes back
+`disabled` with no active dataset). If the read-back fails, OpenOCD stops before loading the image and leaves the CPU halted:
+rerun the command, or `python -m tools.fw reset <board>`.
+
 Test tiers:
 
 ```sh

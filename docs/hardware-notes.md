@@ -13,6 +13,21 @@ Measured facts about the boards and links. Newest entries at the bottom of each 
   AP-locked chip on examine failure; `python -m tools.fw recover <board>` calls it.
 - Blinky verified on both boards by sampling GPIO P2 OUT (`0x50050404`) over SWD:
   XIAO bit 0 (P2.0, LED0) and DK bit 9 (P2.9, LED0) toggle.
+- `python -m tools.fw flash node-dk --erase-settings` verified on the DK (2026-10-19, later): after forming a network (leader),
+  the flash fills the settings partition (0x174000, 0x9000) with 0xff, commits the RRAMC write-buffer and reads the range back
+  before loading the image. The node comes back with `ot state` = `disabled` and `ot dataset active` = `Error 23: NotFound`, and
+  again after a further `python -m tools.fw reset dk`. 7 cycles in all (4 with the plain fill, 3 with commit + read-back), all clean;
+  ~18 s per flash. A dump of the partition after the erase shows only ZMS's fresh init (198 non-0xff bytes in sector 0).
+- RRAMC (`0x5004B000`) behaviour measured over SWD on the DK: a full 128-bit line written by `mww` is committed at once;
+  a partial line sits in the write-buffer (`BUFSTATUS.WRITEBUFEMPTY` 0) briefly, then commits (empty within 200 ms) and survives
+  `reset halt`, even with `READYNEXTTIMEOUT` disabled (its reset value `0x80`; the running app sets `0x80000080`). So the
+  uncommitted-write-buffer hypothesis for the DK's silent-CLI incident was not supported; the explicit `TASKS_COMMITWRITEBUF` is
+  kept only as cheap insurance.
+- A partial fill (simulating an interrupted erase) does leave inconsistent settings: erasing only the first 1 KiB of a formed
+  network gave `disabled` with `dataset active` -> `Error 7: InvalidArgs`; erasing only sector 1 left the dataset and the node
+  autostarted `detached`. Hence the read-back: a failed erase aborts OpenOCD before `nrf54l-load` (exit 1, CPU left halted).
+  None of these reproduced the earlier incident (OT CLI silent after a reboot, shell alive); 4 form + `ot factoryreset` cycles
+  were clean as well. Cause of that incident unknown (see the final-fix report).
 
 ## Standalone router, `apps/thread-cli` on the XIAO (2026-10-19)
 

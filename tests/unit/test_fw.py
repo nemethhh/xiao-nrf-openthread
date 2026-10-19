@@ -1,3 +1,5 @@
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -65,6 +67,54 @@ def test_flash_cmd_erase_range():
     assert fill in argv
     assert argv.index(fill) < argv.index("nrf54l-load x.hex")
     assert not any(a.startswith("mww 0x15c000") for a in flash_cmd(BOARDS["xiao54"], Path("x.hex")))
+
+
+def erase_steps(argv: list[str]) -> list[str]:
+    """The OpenOCD -c commands between `halt` and the image load."""
+    cmds = [argv[i + 1] for i, a in enumerate(argv) if a == "-c"]
+    return cmds[cmds.index("halt") + 1 : cmds.index("nrf54l-load x.hex")]
+
+
+def test_flash_cmd_erase_commits_write_buffer_and_verifies_before_load():
+    """The fill is committed (RRAMC TASKS_COMMITWRITEBUF) and read back before the image is loaded,
+    so an incomplete erase aborts the flash instead of leaving half-erased settings (a partial fill,
+    simulated on the DK, left an inconsistent dataset)."""
+    steps = erase_steps(flash_cmd(BOARDS["dk"], Path("x.hex"), erase_range=(0x174000, 0x9000)))
+    assert steps[0] == "mww 0x5004b500 0x101"  # RRAMC CONFIG: WEN=1, WRITEBUFSIZE=1
+    assert steps[1] == "mww 0x174000 0xffffffff 0x2400"
+    assert steps[2] == "mww 0x5004b008 0x1"  # TASKS_COMMITWRITEBUF
+    assert "read_memory 0x174000 32 0x2400" in steps[3]
+    assert "error" in steps[3]
+
+
+@pytest.mark.parametrize("rng", [(0x174004, 0x9000), (0x174000, 0x8ffc), (0x174000, 0)])
+def test_flash_cmd_erase_rejects_ranges_not_in_whole_rram_words(rng):
+    with pytest.raises(ValueError):
+        flash_cmd(BOARDS["dk"], Path("x.hex"), erase_range=rng)
+
+
+JIMSH = shutil.which("jimsh")  # OpenOCD's own Tcl dialect
+
+
+@pytest.mark.skipif(JIMSH is None, reason="jimsh not installed")
+@pytest.mark.parametrize("bad_index", [None, 0, 3])
+def test_flash_cmd_erase_verify_script_runs_in_jim_tcl(tmp_path, bad_index):
+    verify = erase_steps(flash_cmd(BOARDS["dk"], Path("x.hex"), erase_range=(0x174000, 0x40)))[3]
+    words = ["0xffffffff"] * 16
+    if bad_index is not None:
+        words[bad_index] = "0x12345678"
+    script = tmp_path / "v.tcl"
+    script.write_text(
+        f"proc read_memory {{addr width count}} {{ return [list {' '.join(words)}] }}\n"
+        "proc echo {msg} { puts $msg }\n"
+        f"{verify}\nputs VERIFIED\n"
+    )
+    r = subprocess.run([JIMSH, str(script)], capture_output=True, text=True)
+    if bad_index is None:
+        assert r.returncode == 0 and "VERIFIED" in r.stdout, r.stdout + r.stderr
+    else:
+        assert r.returncode != 0 and "VERIFIED" not in r.stdout
+        assert "erase" in (r.stdout + r.stderr).lower()
 
 
 def test_settings_range_parses_dts(tmp_path, monkeypatch):

@@ -146,12 +146,41 @@ def flash_env(board: Board) -> dict[str, str]:
     return {"OPENOCD_INTERFACE": "jlink"} if board.probe == "jlink" else {}
 
 
+# nRF54L15 RRAM controller (GLOBAL_RRAMC_S, docs/reference/platform-seeedboards/misc/svd/nrf54l15.svd).
+RRAMC = 0x5004B000
+RRAMC_TASKS_COMMITWRITEBUF = RRAMC + 0x008
+RRAMC_CONFIG = RRAMC + 0x500  # WEN bit 0, WRITEBUFSIZE bits 8-13 (128-bit words)
+RRAM_WORD = 16  # RRAM is written in 128-bit words
+
+
+def erase_commands(addr: int, size: int) -> list[str]:
+    """OpenOCD commands that fill [addr, addr+size) with the erased value 0xff, then read it back.
+
+    RRAM has no erase operation; erasing is writing 0xff. Writes go through the RRAMC write-buffer
+    (WRITEBUFSIZE=1, as nrf54l-load sets it), which is committed explicitly afterwards. The read-back
+    raises a Tcl error if any word is not 0xffffffff, which aborts OpenOCD before the image is loaded:
+    a half-erased settings partition leaves OpenThread with an inconsistent dataset.
+    """
+    if size <= 0 or addr % RRAM_WORD or size % RRAM_WORD:
+        raise ValueError(f"erase range {addr:#x}+{size:#x} must be whole {RRAM_WORD}-byte RRAM words")
+    words = size // 4
+    verify = (
+        f"set bad [lsearch -all -not -exact [read_memory {addr:#x} 32 {words:#x}] 0xffffffff]; "
+        f'if {{[llength $bad] > 0}} {{error "settings erase failed: [llength $bad] of {words} words at {addr:#x} '
+        f'are not 0xffffffff; image not loaded"}}'
+    )
+    return [
+        f"mww {RRAMC_CONFIG:#x} 0x101",
+        f"mww {addr:#x} 0xffffffff {words:#x}",
+        f"mww {RRAMC_TASKS_COMMITWRITEBUF:#x} 0x1",
+        verify,
+    ]
+
+
 def flash_cmd(board: Board, hex_file: Path, *, erase_range: tuple[int, int] | None = None) -> list[str]:
     commands = ["halt"]
     if erase_range:
-        addr, size = erase_range
-        # Enable RRAM writes (as nrf54l-load does), then fill the range with the erased value.
-        commands += ["mww 0x5004b500 0x101", f"mww {addr:#x} 0xffffffff {size // 4:#x}"]
+        commands += erase_commands(*erase_range)
     commands += [f"nrf54l-load {hex_file}", "reset run"]
     return _openocd(board, *commands)
 
