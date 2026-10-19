@@ -1,0 +1,16 @@
+[project]
+name = "nrf54l15-thread-router"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[project.optional-dependencies]
+dev = ["pytest", "pyserial", "websockets"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "hw: needs boards attached to this PC",
+    "soak: long-running reliability test",
+    "ha: talks to Home Assistant",
+]
+addopts = "-m 'not hw and not soak and not ha'"

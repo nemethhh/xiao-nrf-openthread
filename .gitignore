@@ -1,0 +1,7 @@
+build/
+.venv/
+ha_token
+docs/reference/
+__pycache__/
+*.pcapng
+.superpowers/
