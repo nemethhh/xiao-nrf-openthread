@@ -54,3 +54,29 @@ Measured facts about the boards and links. Newest entries at the bottom of each 
 - Extcap (`nrf802154_sniffer.py` copied to `~/.local/lib/wireshark/extcap/`) runs on system python3 with system pyserial 3.5 (no venv needed);
   it matches the device by VID/PID 1915:154b. `--extcap-interfaces` works but lists no interface until the sniffer is flashed.
 - `tshark -D` fails here with "Couldn't run dumpcap: Permission denied": `/usr/bin/dumpcap` is `root:wireshark 0750` and the user is not in group `wireshark`.
+
+## XIAO nRF54L15 as RCP against an isolated local OTBR (2026-10-19)
+
+- Firmware `apps/rcp` (NCS `openthread/coprocessor` sample): Spinel/HDLC on `uart20` (P1.8/P1.9, the SAMD11 bridge), no flow control,
+  console/shell/log removed from the UART (`CONFIG_CONSOLE=n`, `CONFIG_LOG=n`, chosen `zephyr,console`/`shell-uart` deleted).
+  Baud via `apps/rcp/overlays/baud-<N>.overlay`. 120 KB flash, 26 KB RAM.
+- RCP version string: `OPENTHREAD/ncs-thread-reference-20250402-18-g0fe68ff23; Zephyr; Oct 19 2026 19:54:19`.
+- OTBR: `openthread/border-router:sha-fd872ab@sha256:9b1bb839de08...` = ot-br-posix `fd872ab9d4af` (`otbr-agent` 0.3.0-fd872ab, Thread 1.4.0),
+  run by `tools/otbr-local.sh` on the `--internal` network `otbr-isolated` (`docker network inspect ... -f '{{.Internal}}'` = `true`).
+- Version check against HA add-on `openthread_border_router` 3.3.0 (build.yaml): stable OTBR `OTBR_VERSION: fd872ab9d4afdfaf034b3b1154fed08b8b6d1e43`
+  (identical to the pinned image's revision label), beta `OTBR_BETA_VERSION: cb4bdae242b2...` (= Docker tag `v2026.10.0`). HA builds with its own
+  config header and `OT_RCP_RESTORATION_MAX_COUNT=2`; the image is the upstream build, so behaviour is the same code, not the same binary.
+- **HA's "flow control off" radio URL does not work with this bridge.** With flow control off the add-on appends `&uart-init-deassert`;
+  otbr-agent then deasserts DTR/RTS and fails at start (`[C] Platform: Init() at spinel_driver.cpp:87: Failure`). Cause, measured with pyserial
+  (Spinel `PROP_VALUE_GET NCP_VERSION` frame at 460800): the SAMD11 bridge forwards nothing while DTR is low:
+  DTR=1/RTS=1 -> 92 bytes back, DTR=0/RTS=1 -> 0, DTR=1/RTS=0 -> 92, DTR=0/RTS=0 -> 0. (One early run with `uart-init-deassert` right after
+  the first flash did work; every later run, 8 of 8 incl. after reflash and reset, failed. Not understood; do not rely on it.)
+  Working URL forms at 460800: `?uart-baudrate=460800` and `?uart-baudrate=460800&uart-flow-control`. The latter is what the add-on emits with
+  **"flow_control: true"**, and is harmless here: a CDC-ACM tty ignores CRTSCTS and the RCP UART has no flow control. So for Home Assistant
+  set `baudrate: 460800` and `flow_control: true` (even though there are no RTS/CTS wires). `tools/otbr-local.sh` selects the form with
+  `OTBR_FLOW=hw|deassert|none`, default `hw`.
+- Tests: `tests/hw/test_rcp_local.py` 3/3 pass at 460800 (RCP version, OTBR leader within 30 s, DK joins and pings 20/20).
+- **Serial soak, 460800 baud, no hardware flow control, OTBR_FLOW=hw: PASS.** DK pings the OTBR mesh-local address: 600 x 64 B at 1 s
+  + 100 x 1000 B at 0.5 s (fragmented) = 700/700 received (0.00% loss); container `RestartCount 0`, running; no RCP/Spinel
+  reset/restore/fail/timeout lines in the OTBR log (672 s). Evidence: `build/soak-460800.txt`. No need to test 115200 or lower `RCP_BAUD`
+  (`tools/fw.py` keeps `RCP_BAUD = 460800`). The soak is the single 12-minute run; longer-term stability is for Task 8 on HA.

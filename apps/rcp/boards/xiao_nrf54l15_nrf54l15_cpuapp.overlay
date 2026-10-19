@@ -1,0 +1,23 @@
+/*
+ * Spinel/HDLC to the host over the XIAO's on-board SAMD11 USB-UART bridge (uart20, P1.8/P1.9).
+ * The bridge has TX/RX only: no hw-flow-control, no rts/cts pins. The UART carries Spinel only, so
+ * console, shell and log are removed from it (any stray byte corrupts HDLC framing).
+ * Baud rate comes from overlays/baud-<N>.overlay (tools/fw.py adds it).
+ */
+
+/ {
+	chosen {
+		zephyr,ot-uart = &uart20;
+	};
+};
+
+&{/chosen} {
+	/delete-property/ zephyr,console;
+	/delete-property/ zephyr,shell-uart;
+	/delete-property/ nordic,rpc-uart;
+};
+
+&uart20 {
+	status = "okay";
+	/delete-property/ hw-flow-control;
+};

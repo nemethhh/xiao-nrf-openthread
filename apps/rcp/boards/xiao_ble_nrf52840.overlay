@@ -1,0 +1,15 @@
+/* nRF52840 fallback RCP: Spinel/HDLC over the board's USB CDC ACM port (see overlays/usb-cdc.conf). */
+
+/ {
+	chosen {
+		zephyr,ot-uart = &board_cdc_acm_uart;
+	};
+};
+
+&{/chosen} {
+	/delete-property/ zephyr,console;
+	/delete-property/ zephyr,shell-uart;
+	/delete-property/ zephyr,uart-mcumgr;
+	/delete-property/ zephyr,bt-mon-uart;
+	/delete-property/ zephyr,bt-c2h-uart;
+};
