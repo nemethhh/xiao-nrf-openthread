@@ -33,6 +33,41 @@ Board targets (NCS v3.4.1): `xiao_nrf54l15/nrf54l15/cpuapp`, `nrf54l15dk/nrf54l1
 `xiao_ble` (XIAO nRF52840). This repo is a freestanding app repo: builds run inside the NCS
 toolchain with `ZEPHYR_BASE=~/ncs/<version>/zephyr` set (`tools/fw.py` does this).
 
+## Build, flash, test
+
+`python -m tools.fw build|flash|reset|recover <target>` wraps the NCS toolchain (never call `west` directly).
+
+| Target | Board | What | Notes |
+| --- | --- | --- | --- |
+| `router-xiao54` | XIAO nRF54L15 | Thread router CLI (`apps/thread-cli`) | SWD flash via OpenOCD (CMSIS-DAP) |
+| `node-dk` | nRF54L15 DK | Thread test node CLI | J-Link: `OPENOCD_INTERFACE=jlink` is set by `tools/fw.py` |
+| `rcp-xiao54` | XIAO nRF54L15 | OpenThread RCP at 460800 baud (`apps/rcp`) | the border-router radio; the image HA uses |
+| `sniffer-xiao52` | XIAO nRF52840 | 802.15.4 sniffer | UF2 flash after reset double-tap |
+| `rcp-xiao52` | XIAO nRF52840 | fallback RCP over USB CDC ACM | UF2; untested on hardware |
+
+Test tiers:
+
+```sh
+.venv/bin/pytest -q                        # unit tests only (no hardware, no Home Assistant)
+.venv/bin/pytest -m hw -v                  # boards on this PC: router, two-node, local RCP against an isolated OTBR
+.venv/bin/pytest -m soak -v                # long RCP reliability soak
+.venv/bin/pytest -m ha -v                  # Home Assistant stage (read-only; skips until the XIAO is on the HA host)
+```
+
+`-m hw` router tests need the XIAO on this PC, so they are not rerun once it lives on Home Assistant.
+
+## Home Assistant border router
+
+The XIAO runs `rcp-xiao54` and is the radio of HA's OpenThread Border Router add-on (`core_openthread_border_router` 3.3.0).
+The add-on must use `flow_control: true` (the XIAO's USB bridge is silent while DTR is deasserted). `tools/ha.py` is the
+HA client (`python -m tools.ha info|serial|addon-info|datasets`, read-only CLI); `tools/ha_setup.py` installs/configures the
+add-on, confirms discovery and marks the dataset preferred (`python -m tools.ha_setup` is a dry run, `--apply` writes).
+`tests/ha/` checks the result and the end-to-end path (DK joins, gets an OMR address, pings the LAN via NAT64); tests
+skip while the XIAO is not on the HA host. Step-by-step: `docs/checklist.md`, "Move XIAO to Home Assistant"
+(status PENDING until the cable is moved). The `ha_token` file (HA long-lived token) is never committed.
+
+Fallback if the nRF54L15 RCP proves unreliable on HA: build and flash `rcp-xiao52` (USB CDC ACM) on the XIAO nRF52840.
+
 ## Sniffing
 
 The XIAO nRF52840 runs NCS's `802154_sniffer` sample and shows up in Wireshark through Nordic's extcap.
@@ -65,4 +100,4 @@ Preferences > Protocols > Thread > "Thread Network Key" (it derives the MLE/MAC 
 sequence counter if prompted), or add it under Protocols > IEEE 802.15.4 > Decryption Keys.
 Frames are still readable without the key (PAN ID, addresses, MLE structure).
 
-If the sniffer cannot be used, `rcp-xiao52` is the planned fallback RCP over USB CDC (built at the end of the RCP work).
+`rcp-xiao52` is the fallback RCP over USB CDC if the XIAO nRF54L15 RCP misbehaves on Home Assistant.

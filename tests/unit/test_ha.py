@@ -225,3 +225,116 @@ def test_call_times_out_on_silent_server(make_ha):
             client.call("a/b", _wait=0.2)
     assert ei.value.code == "timeout"
     assert TOKEN not in str(ei.value)
+
+
+def _silent_server(send_first: bool, reply_to_auth: bool = False):
+    def handler(ws):
+        if send_first:
+            ws.send(json.dumps({"type": "auth_required"}))
+        try:
+            ws.recv(timeout=5)
+        except Exception:
+            pass
+        import time
+        time.sleep(2)
+
+    server = serve(handler, "localhost", 0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+@pytest.mark.parametrize("send_first", [False, True])
+def test_auth_handshake_times_out(monkeypatch, token_file, send_first):
+    import tools.ha as ha_mod
+
+    monkeypatch.setattr(ha_mod, "READ_WAIT", 0.3)
+    server = _silent_server(send_first)
+    try:
+        client = HaClient(f"http://localhost:{server.socket.getsockname()[1]}", token_file)
+        with pytest.raises(HaError) as ei:
+            with client:
+                pass
+        assert ei.value.code == "timeout"
+        assert TOKEN not in str(ei.value)
+    finally:
+        server.shutdown()
+
+
+def test_find_new_xiao_single():
+    from tools.ha import find_new_xiao
+
+    base = ["/dev/serial/by-id/usb-Other_1"]
+    new = "/dev/serial/by-id/usb-Seeed_Studio_Seeed_Studio_XIAO_nrf54_CMSIS-DAP_AA2C939D-if02"
+    assert find_new_xiao(base, base + [new, "/dev/serial/by-id/usb-Other_2"]) == new
+
+
+@pytest.mark.parametrize("cur", [
+    ["/dev/serial/by-id/usb-Other_1"],  # nothing new
+    ["/dev/serial/by-id/usb-Other_1", "/dev/serial/by-id/usb-Seeed_XIAO_nrf54_a-if00",
+     "/dev/serial/by-id/usb-Seeed_XIAO_nrf54_b-if02"],  # two new
+    ["/dev/serial/by-id/usb-Other_1", "/dev/serial/by-id/usb-Other_2"],  # new but not XIAO
+])
+def test_find_new_xiao_raises(cur):
+    from tools.ha import find_new_xiao
+
+    with pytest.raises(ValueError):
+        find_new_xiao(["/dev/serial/by-id/usb-Other_1"], cur)
+
+
+def test_xiao_ha_device_constant():
+    from tools.ha import XIAO_HA_DEVICE
+
+    assert "Seeed" in XIAO_HA_DEVICE and "CMSIS-DAP" in XIAO_HA_DEVICE and "XIAO_nrf54" in XIAO_HA_DEVICE
+
+
+def test_confirm_flow_posts_empty_body_with_bearer(token_file):
+    import http.server
+
+    seen = {}
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", 0))
+            seen.update(path=self.path, auth=self.headers.get("Authorization"), body=self.rfile.read(n))
+            out = b'{"type": "create_entry"}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("localhost", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        client = HaClient(f"http://localhost:{srv.server_address[1]}", token_file)
+        assert client.confirm_flow("abc123") == {"type": "create_entry"}
+    finally:
+        srv.shutdown()
+    assert seen["path"] == "/api/config/config_entries/flow/abc123"
+    assert seen["auth"] == f"Bearer {TOKEN}"
+    assert json.loads(seen["body"]) == {}
+
+
+def test_confirm_flow_http_error_hides_token(token_file):
+    import http.server
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("localhost", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        client = HaClient(f"http://localhost:{srv.server_address[1]}", token_file)
+        with pytest.raises(HaError) as ei:
+            client.confirm_flow("x")
+    finally:
+        srv.shutdown()
+    assert ei.value.code == "http_404" and TOKEN not in str(ei.value)

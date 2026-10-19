@@ -21,6 +21,19 @@ READ_WAIT = 30.0  # seconds to wait for a reply to a read
 WRITE_WAIT = 600.0  # seconds to wait for a reply to install/start/restart
 _UNSET: Any = object()
 
+# Predicted HA-side path of the XIAO RCP's UART bridge. HA OS uses the same udev by-id naming as the dev
+# host; Task 8 confirms it by diffing `python -m tools.ha serial` against the pre-plug baseline
+# (find_new_xiao). Interface 02 is the SAMD11 bridge's CDC-ACM UART.
+XIAO_HA_DEVICE = "/dev/serial/by-id/usb-Seeed_Studio_Seeed_Studio_XIAO_nrf54_CMSIS-DAP_AA2C939D-if02"
+
+
+def find_new_xiao(baseline: list[str], current: list[str]) -> str:
+    """The single by-id entry in `current` (not in `baseline`) containing "XIAO_nrf54"; raise on 0 or >1."""
+    new = [d for d in current if d not in set(baseline) and "XIAO_nrf54" in d]
+    if len(new) != 1:
+        raise ValueError(f"expected exactly one new XIAO_nrf54 serial device, found {len(new)}: {new}")
+    return new[0]
+
 
 class HaError(RuntimeError):
     def __init__(self, code: str, message: str):
@@ -47,17 +60,27 @@ class HaClient:
         self._cm = connect(self.ws_url, max_size=None)
         self._ws = self._cm.__enter__()
         try:
-            first = json.loads(self._ws.recv())
+            deadline = time.monotonic() + READ_WAIT
+            first = json.loads(self._recv(deadline, "auth_required"))
             if first.get("type") != "auth_required":
                 raise HaError("protocol", f"unexpected first message type {first.get('type')!r}")
             self._ws.send(json.dumps({"type": "auth", "access_token": self._token}))
-            reply = json.loads(self._ws.recv())
+            reply = json.loads(self._recv(deadline, "auth_ok"))
             if reply.get("type") != "auth_ok":
                 raise HaError("auth_invalid", "authentication rejected by Home Assistant")
         except BaseException:
             self.close()
             raise
         return self
+
+    def _recv(self, deadline: float, what: str) -> str | bytes:
+        remaining = deadline - time.monotonic()
+        try:
+            if remaining <= 0:
+                raise TimeoutError
+            return self._ws.recv(timeout=remaining)
+        except TimeoutError:
+            raise HaError("timeout", f"no {what} from Home Assistant within {READ_WAIT:g}s") from None
 
     def __exit__(self, *exc) -> None:
         self.close()
