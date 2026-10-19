@@ -84,3 +84,14 @@ def test_toolchain_wrap_reads_ncs_version():
     argv = toolchain_wrap(["west", "--version"])
     assert argv[:7] == ["nrfutil", "sdk-manager", "toolchain", "launch", "--ncs-version", "v3.4.1", "--"]
     assert argv[-2:] == ["west", "--version"]
+
+
+def test_build_cmd_rcp_usb_fallback_uses_cdc_conf_and_no_baud():
+    argv = build_cmd(TARGETS["rcp-xiao52"])
+    assert argv[argv.index("-b") + 1] == "xiao_ble"
+    conf = next(a for a in argv if a.startswith("-DEXTRA_CONF_FILE="))
+    path = Path(conf.removeprefix("-DEXTRA_CONF_FILE="))
+    assert path.name == "usb-cdc.conf" and path.exists()
+    assert "baud-" not in overlay_arg(argv)  # USB CDC has no baud rate
+    with pytest.raises(ValueError):
+        build_cmd(TARGETS["rcp-xiao52"], baud=115200)

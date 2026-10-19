@@ -34,3 +34,10 @@ The XIAO nRF52840 (`2886:802f`, serial `B46C2A1C09259A32`) is on USB running an 
    read `ot channel` / `ot panid`, then run the capture from README "Sniffing".
    Pass: `tshark -r build/capture.pcapng | wc -l` > 0 with the network's PAN ID.
 6. Record the result in `docs/hardware-notes.md`.
+
+## nRF52840 fallback RCP (optional)
+
+Status: PENDING, only needed if the XIAO nRF54L15 RCP proves unreliable on Home Assistant (the local soak at 460800 passed).
+
+`python -m tools.fw build rcp-xiao52` builds (`build/rcp-xiao52/rcp/zephyr/zephyr.uf2`, Spinel over USB CDC ACM). Flashing needs a double-tap of
+reset on the XIAO nRF52840, then `python -m tools.fw flash rcp-xiao52`. Untested on hardware.
