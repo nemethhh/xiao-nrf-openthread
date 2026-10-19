@@ -2,6 +2,20 @@
 
 Steps that need a human at the desk. Record results in `docs/hardware-notes.md`.
 
+Open items (2026-10-19): the nRF52840 charger check, the add-on restart checks, and rotating HA's Thread network key
+(below). The router power-loss check only matters if the XIAO nRF54L15 is reflashed as a standalone router.
+
+## Rotate Home Assistant's Thread network key
+
+Status: RECOMMENDED. During the nRF52840 router work, a failed test run printed HA's Thread dataset (it contains the network
+key) into the agent session's transcript; the local log was redacted and nothing with the key was committed. Only the DK and
+the nRF52840 are on the network, so rotating is cheap now:
+
+1. In Home Assistant: Settings > Devices & services > Thread, reset/recreate the OpenThread Border Router's network so the
+   add-on creates a new dataset (new network key), and make it the preferred network.
+2. `.venv/bin/pytest -m "ha and not hw" -v` (expects one preferred OTBR dataset).
+3. `.venv/bin/python -m tools.ha_join xiao52 --router` moves the nRF52840 onto the new network.
+
 ## Power-loss persistence (router)
 
 Status: PENDING (needs a physical USB unplug). Applies only if the XIAO is reflashed as a standalone router: it now runs `rcp-xiao54` on the Home Assistant host.
@@ -70,7 +84,7 @@ RCP means giving that up.
 
 ## Antenna fix: reflash XIAO RCP
 
-Status: reflash + local verification DONE 2026-10-19; HA re-run PENDING (needs the XIAO plugged back into the HA host).
+Status: DONE 2026-10-19 (reflash, local verification and the HA re-run).
 
 The first `rcp-xiao54` image did not drive the RF switch (`CONFIG_GPIO=n`, fixed in commit 5d15ff5; details in
 `docs/hardware-notes.md`, "RF switch driven by the RCP image").
@@ -78,16 +92,16 @@ The first `rcp-xiao54` image did not drive the RF switch (`CONFIG_GPIO=n`, fixed
 1. DONE 2026-10-19. With the XIAO on this PC: `python -m tools.fw build rcp-xiao54 --pristine && python -m tools.fw flash rcp-xiao54`.
 2. DONE 2026-10-19. `.venv/bin/pytest -m hw tests/hw/test_rcp_local.py -v`: 5/5 pass, including
    `test_rcp_drives_rf_switch_to_internal_antenna` (P2 DIR `0x128`, OUT `0x108`) and the soak (700/700 at 460800, `build/soak-460800.txt`).
-3. PENDING. Unplug the XIAO from this PC and plug it back into the Home Assistant host. Do not reflash it again.
-4. PENDING. `.venv/bin/python -m tools.ha find-xiao` must print exactly one path, the same as `XIAO_HA_DEVICE` in `tools/ha.py`
+3. DONE 2026-10-19. Unplug the XIAO from this PC and plug it back into the Home Assistant host. Do not reflash it again.
+4. DONE 2026-10-19 (printed `XIAO_HA_DEVICE`). `.venv/bin/python -m tools.ha find-xiao` must print exactly one path, the same as `XIAO_HA_DEVICE` in `tools/ha.py`
    (exit 1 = stop and investigate).
-5. PENDING (user, from their own terminal: it is an HA write). `.venv/bin/python -m tools.ha_setup --apply`. The add-on keeps its
+5. DONE 2026-10-19 (add-on `started`). User, from their own terminal (an HA write): `.venv/bin/python -m tools.ha_setup --apply`. The add-on keeps its
    options (device, baudrate 460800, flow_control true); it went to state `error` when its radio disappeared, and `--apply` starts it
    again and re-confirms discovery and the preferred dataset. Check first with the dry run `.venv/bin/python -m tools.ha_setup`.
-6. PENDING. `.venv/bin/pytest -m "ha and not hw" -v` (the restart test skips without `HA_ALLOW_RESTART=1`).
-7. PENDING. `.venv/bin/pytest -m "ha and hw" tests/ha/test_end_to_end.py -v` (DK joins, OMR address, NAT64 ping; the DK is
+6. DONE 2026-10-19: 3 passed, 1 skipped. `.venv/bin/pytest -m "ha and not hw" -v` (the restart test skips without `HA_ALLOW_RESTART=1`).
+7. DONE 2026-10-19: 3 passed, 1 skipped (after the OtCli echo fix, commit e329320). `.venv/bin/pytest -m "ha and hw" tests/ha/test_end_to_end.py -v` (DK joins, OMR address, NAT64 ping; the DK is
    factory-reset again after each test, so HA's network key does not stay on it).
-8. PENDING. Record results and the date in `docs/hardware-notes.md`.
+8. DONE 2026-10-19. Record results and the date in `docs/hardware-notes.md`.
 
 ## Move XIAO to Home Assistant
 
@@ -100,7 +114,7 @@ PENDING (run by the user; restarts the add-on once per restart test, `test_otbr_
 `HA_ALLOW_RESTART=1 .venv/bin/pytest -m ha -v`
 
 The XIAO is flashed with `rcp-xiao54` at 460800 baud (soak passed 700/700 twice; reflashed with the RF-switch fix, see "Antenna fix: reflash XIAO RCP"). Do not reflash it. The OTBR add-on
-`core_openthread_border_router` 3.3.0 is already installed (stopped). Everything below is tooling that is already written
+`core_openthread_border_router` 3.3.0 was already installed (stopped) when this runbook was written; it now runs. Everything below is tooling that is already written
 and unit-tested; the steps only need the board moved. `ha_token` must be in the repo root.
 
 1. DONE 2026-10-19. Unplug the XIAO from this PC and plug it into the Home Assistant host.

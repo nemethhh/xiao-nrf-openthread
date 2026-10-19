@@ -147,7 +147,7 @@ Measured facts about the boards and links. Newest entries at the bottom of each 
 
 - Firmware `router-xiao52` = `apps/thread-cli` for `xiao_ble` (FTD) with `apps/thread-cli/boards/xiao_ble_nrf52840.conf`:
   USB device_next CDC ACM console/shell, `CDC_ACM_SERIAL_INITIALIZE_AT_BOOT`, `SHELL_BACKEND_SERIAL_CHECK_DTR` (shell output
-  held until a host asserts DTR; printk drops when the CDC ring is full, nothing blocks), no `CONFIG_LOG`. Flash 495040 B of
+  held until a host asserts DTR: the shell thread waits, while printk drops bytes when the CDC ring is full and OpenThread never waits), no `CONFIG_LOG`. Flash 495040 B of
   788 KB (61%), RAM 101496 B of 256 KB (39%). UF2 990208 B at 0x27000 (Adafruit bootloader 0.6.1, S140 7.3.0, board ID
   `Seeed_XIAO_nRF52840_Sense`, drive label `XIAO-SENSE`).
 - USB identity 2fe3:0004 (Zephyr default VID/PID), manufacturer "Seeed Studio", product "XIAO nRF52840 Thread Router",
@@ -186,3 +186,11 @@ Measured facts about the boards and links. Newest entries at the bottom of each 
   5/5 (router after 9 s, back as child after 2 s, DK ping 10/10, headless reachable at 10 s), finalizer left it a router
   on `ha-thread-a98e`, rloc16 0xe000 (the factory resets give it a new mleid each time). DK e2e 3/3 again.
 - Power loss on a USB charger (no host at all): PENDING, `docs/checklist.md`, "XIAO nRF52840 router: power loss on a USB charger".
+
+## Antenna-fixed RCP back on Home Assistant (2026-10-19)
+
+- The user moved the XIAO back; `python -m tools.ha find-xiao` printed `XIAO_HA_DEVICE` again. The add-on had gone to
+  `error` when its radio vanished; the user ran `ha_setup --apply` (options unchanged) and it is `started`.
+- `pytest -m "ha and not hw"`: 3 passed, 1 skipped (restart). `pytest -m "ha and hw" tests/ha/test_end_to_end.py`: first run
+  2 failed / 1 passed because of an OtCli race (flushing the input buffer split the prompt's colour escape, so the echo
+  came back as `32mot networkname`); fixed in e329320, then 3 passed, 1 skipped.

@@ -10,6 +10,14 @@ in that network, extending the mesh from any USB charger. (The repo was called `
 | Seeed XIAO nRF52840 | permanent Thread router in HA's network (`router-xiao52`); re-flashable as 802.15.4 sniffer or fallback RCP |
 | Nordic nRF54L15 DK | second Thread node for tests |
 
+Current setup (2026-10-19): HA's Thread network `ha-thread-a98e` (channel 15) runs through the XIAO nRF54L15 on the
+Home Assistant host; the XIAO nRF52840 is a router in it. Open manual items: `docs/checklist.md`.
+
+```
+LAN ── Home Assistant (OTBR add-on) ══USB══ XIAO nRF54L15 (RCP)  ))) Thread mesh (((  XIAO nRF52840 (router, USB charger)
+                                                                                        nRF54L15 DK (tests)
+```
+
 ## Setup (Arch / CachyOS)
 
 ```sh
@@ -78,8 +86,8 @@ frame locals can hold Home Assistant's Thread network key.
 ## Home Assistant border router
 
 Status: the HA stage is live and verified (2026-10-19): the XIAO runs `rcp-xiao54` and is the radio of HA's OpenThread Border Router add-on (`core_openthread_border_router` 3.3.0).
-The XIAO was since reflashed on this PC with the RF-switch fix; until it is back on the HA host and re-verified, see
-`docs/checklist.md`, "Antenna fix: reflash XIAO RCP".
+It runs the RF-switch fix (switch powered, internal antenna), re-verified on the HA host the same day: add-on `started`,
+HA tests and the end-to-end test pass (`docs/checklist.md`, "Antenna fix: reflash XIAO RCP").
 The add-on must use `flow_control: true` (the XIAO's USB bridge is silent while DTR is deasserted). `tools/ha.py` is the
 HA client (`python -m tools.ha info|serial|addon-info|datasets|find-xiao`, read-only CLI; `find-xiao` prints the XIAO's new by-id path on the HA host); `tools/ha_setup.py` installs/configures the
 add-on, confirms discovery and marks the dataset preferred (`python -m tools.ha_setup` is a dry run, `--apply` writes).
@@ -94,7 +102,7 @@ Fallback if the nRF54L15 RCP proves unreliable on HA: build and flash `rcp-xiao5
 The XIAO nRF52840 runs the same `apps/thread-cli` firmware as the nRF54L15 boards (FTD, OpenThread CLI in the Zephyr
 shell). Its board file `apps/thread-cli/boards/xiao_ble_nrf52840.conf` puts the shell on the native USB port (CDC ACM)
 and makes it headless: USB comes up by itself, OpenThread starts from `main()` when a dataset is stored, and the shell
-holds its output until a host opens the port (DTR) instead of blocking. Thread settings live in ZMS on the 32 KiB
+holds its output until a host opens the port (DTR); only the shell thread waits, OpenThread and `printk` never block on USB. Thread settings live in ZMS on the 32 KiB
 `storage_partition` at 0xec000 (internal flash, below the UF2 bootloader), so the network survives resets (tested)
 and power loss (on flash, like a reset; the charger unplug check is in `docs/checklist.md`).
 
