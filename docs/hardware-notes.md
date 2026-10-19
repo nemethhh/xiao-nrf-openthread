@@ -37,3 +37,20 @@ Measured facts about the boards and links. Newest entries at the bottom of each 
 - `ot ping` output on the DK: `N packets transmitted, M packets received.` (+ loss/RTT lines); 20/20 received, RTT 13-27 ms.
   The shell redraws `uart:~$ ` inside asynchronous output (even glued to `Done`), so `OtCli` strips the prompt anywhere in a line.
 - `tests/hw/test_two_node.py` passes 3/3 (join + ping 20/20, DK upgrades to router with 2 router-table rows, DK reattaches after XIAO reset).
+
+## XIAO nRF52840 sniffer (2026-10-19)
+
+- Board on USB: `2886:802f` ("ZEPHYR" / "USB-DEV", serial `B46C2A1C09259A32`), running an unknown Zephyr app.
+  `2886:802f` is what `xiao_ble` uses by default (Zephyr CDC ACM defaults); no SWD probe is attached.
+  Current ports: `/dev/serial/by-id/usb-ZEPHYR_USB-DEV_B46C2A1C09259A32-if00` and `-if02`.
+- `python -m tools.fw build sniffer-xiao52` works with no overlay: `xiao_ble` (resolves to `xiao_ble/nrf52840`) already
+  defines `cdc_acm_uart0` through `boards/common/usb/cdc_acm_serial.dtsi`, as the nRF52840 Dongle does.
+  Output `build/sniffer-xiao52/802154_sniffer/zephyr/zephyr.uf2` (258048 B, start 0x27000, matches the XIAO partition table
+  for the Adafruit bootloader), flash 16% / RAM 22%.
+- Sniffer firmware USB identity (from its `prj.conf`): VID `1915`, PID `154b`, manufacturer "Nordic Semiconductor ASA",
+  product "nRF 802154 Sniffer", serial = HWINFO device id (same `B46C2A1C09259A32`). Expected port after flashing:
+  `/dev/serial/by-id/usb-Nordic_Semiconductor_ASA_nRF_802154_Sniffer_B46C2A1C09259A32-if00` (in `BOARDS["xiao52"]`; prediction, unverified).
+- A 1200-baud open/close of the CDC ACM port did NOT enter the UF2 bootloader (the running app ignores it); the UF2 drive needs a double-tap of reset.
+- Extcap (`nrf802154_sniffer.py` copied to `~/.local/lib/wireshark/extcap/`) runs on system python3 with system pyserial 3.5 (no venv needed);
+  it matches the device by VID/PID 1915:154b. `--extcap-interfaces` works but lists no interface until the sniffer is flashed.
+- `tshark -D` fails here with "Couldn't run dumpcap: Permission denied": `/usr/bin/dumpcap` is `root:wireshark 0750` and the user is not in group `wireshark`.
