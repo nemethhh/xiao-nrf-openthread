@@ -13,3 +13,16 @@ Measured facts about the boards and links. Newest entries at the bottom of each 
   AP-locked chip on examine failure; `python -m tools.fw recover <board>` calls it.
 - Blinky verified on both boards by sampling GPIO P2 OUT (`0x50050404`) over SWD:
   XIAO bit 0 (P2.0, LED0) and DK bit 9 (P2.9, LED0) toggle.
+
+## Standalone router, `apps/thread-cli` on the XIAO (2026-10-19)
+
+- `tests/hw/test_router.py` passes 4/4: banner, leader formation, network survives SWD reset
+  (rejoins with no commands, dataset unchanged), external-antenna build.
+- Settings persistence: `CONFIG_SETTINGS=y` with ZMS in the settings partition (32 KiB); stored network
+  survives reflash and reset. A node with a stored network autostarts, which swallows a lone
+  `ot factoryreset`, so `OtCli.factory_reset` re-sends until the node reports `disabled`.
+- Antenna switch measured electrically (GPIO P2 OUT `0x50050404` over SWD; RF switch control is P2.5, bit 5):
+  - internal build: P2 OUT = `0x108`, bit 5 low (U.FL not selected).
+  - external build: bit 5 high, asserted in `test_external_antenna_build` (raw value not recorded).
+  This backs the "never silently the wrong antenna" anti-goal: the banner and the pin agree for both builds.
+- Power-loss persistence (USB unplug 10 s): PENDING, needs a human; see `docs/checklist.md`.

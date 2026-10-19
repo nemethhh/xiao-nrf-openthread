@@ -1,0 +1,6 @@
+/* Select the U.FL connector: without regulator-boot-on the active-low rfsw-ctl GPIO
+ * idles physically high, which routes the radio to the external antenna.
+ */
+&rfsw_ctl {
+	/delete-property/ regulator-boot-on;
+};
