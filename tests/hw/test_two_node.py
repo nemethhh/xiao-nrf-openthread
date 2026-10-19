@@ -1,11 +1,12 @@
 """Goal 2: the nRF54L15 DK joins the network formed by the XIAO."""
 
 import re
+import time
 
 import pytest
 
 from tests.conftest import ensure_flashed, form_network, reset_board
-from tests.otcli import OtCli  # noqa: F401  (type of the fixtures)
+from tests.otcli import OtError
 
 pytestmark = pytest.mark.hw
 
@@ -53,8 +54,31 @@ def test_dk_upgrades_to_router(xiao, dk):
     assert router_rows(xiao) == 2, xiao.cmd("router table")
 
 
+def partition_id(cli) -> int:
+    for line in cli.cmd("leaderdata"):
+        if m := re.match(r"Partition ID:\s*(\d+)", line):
+            return int(m.group(1))
+    raise AssertionError("no Partition ID in leaderdata")
+
+
 def test_dk_reattaches_after_leader_reset(xiao, dk):
     join(xiao, dk)
+    addr = xiao.cmd("ipaddr mleid")[0]
     reset_board("xiao54")
     assert xiao.wait_state({"leader"}, 120) == "leader"
-    assert dk.wait_state({"child", "router"}, 120) in {"child", "router"}
+    # The DK's state can stay "child" through the whole reboot (long supervision timeout), and a DK
+    # that had already become a router may form its own partition meanwhile. So demand real
+    # connectivity: a ping gets through AND both nodes report the same partition, within 120 s.
+    deadline = time.monotonic() + 120
+    last = None
+    while time.monotonic() < deadline:
+        try:
+            out = " ".join(dk.cmd(f"ping {addr} 64 1 1", timeout=10))
+            same = partition_id(dk) == partition_id(xiao)
+            last = (out, same)
+            if same and re.search(r"1 packets received", out):
+                return
+        except (TimeoutError, OtError, AssertionError) as e:
+            last = repr(e)
+        time.sleep(2)
+    pytest.fail(f"DK did not reconnect to the XIAO's partition within 120 s; last: {last}")
