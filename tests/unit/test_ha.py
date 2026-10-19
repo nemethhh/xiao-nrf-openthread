@@ -124,7 +124,7 @@ def test_supervisor_sends_data_when_given(make_ha):
 
 def test_addon_info_missing_returns_none(make_ha):
     fake, client = make_ha(
-        lambda m: {"success": False, "error": {"code": "unknown_error", "message": "Addon not found"}}
+        lambda m: {"success": False, "error": {"code": "unknown_error", "message": "App core_nope does not exist"}}
     )
     with client:
         assert client.addon_info("core_nope") is None
@@ -176,3 +176,52 @@ def test_thread_methods(make_ha):
 def test_repr_hides_token(make_ha):
     _, client = make_ha()
     assert TOKEN not in repr(client)
+
+
+@pytest.mark.parametrize("code,message", [
+    ("unauthorized", "Unauthorized"),
+    ("unknown_command", "Unknown command."),
+    ("unknown_error", "Supervisor is busy"),
+])
+def test_addon_info_other_errors_raise(make_ha, code, message):
+    fake, client = make_ha(lambda m: {"success": False, "error": {"code": code, "message": message}})
+    with client:
+        with pytest.raises(HaError) as ei:
+            client.addon_info("core_x")
+    assert ei.value.code == code
+
+
+def test_supervisor_timeout_passthrough(make_ha):
+    fake, client = make_ha()
+    with client:
+        client.supervisor("/x", timeout=None)
+        client.supervisor("/y", timeout=5)
+        client.supervisor("/z")
+    assert fake.received[1]["timeout"] is None and "timeout" in fake.received[1]
+    assert fake.received[2]["timeout"] == 5
+    assert "timeout" not in fake.received[3]
+
+
+def test_write_calls_send_null_timeout(make_ha):
+    fake, client = make_ha()
+    with client:
+        client.install_addon("s")
+        client.start_addon("s")
+        client.restart_addon("s")
+        client.set_addon_options("s", {})
+    for m in fake.received[1:5]:
+        assert m["method"] == "post" and m["timeout"] is None
+
+
+def test_call_times_out_on_silent_server(make_ha):
+    def responder(m):
+        import time
+        time.sleep(1.5)
+        return {"success": True, "result": 1}
+
+    fake, client = make_ha(responder)
+    with client:
+        with pytest.raises(HaError) as ei:
+            client.call("a/b", _wait=0.2)
+    assert ei.value.code == "timeout"
+    assert TOKEN not in str(ei.value)

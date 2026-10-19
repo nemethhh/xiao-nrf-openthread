@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -16,6 +17,9 @@ from urllib.parse import urlparse
 from websockets.sync.client import connect
 
 OTBR_SLUG = "core_openthread_border_router"
+READ_WAIT = 30.0  # seconds to wait for a reply to a read
+WRITE_WAIT = 600.0  # seconds to wait for a reply to install/start/restart
+_UNSET: Any = object()
 
 
 class HaError(RuntimeError):
@@ -63,14 +67,22 @@ class HaClient:
             self._cm.__exit__(None, None, None)
             self._ws = None
 
-    def call(self, msg_type: str, **payload) -> Any:
+    def call(self, msg_type: str, *, _wait: float = READ_WAIT, **payload) -> Any:
         if self._ws is None:
             raise HaError("not_connected", "use HaClient as a context manager")
         self._id += 1
         msg_id = self._id
         self._ws.send(json.dumps({"id": msg_id, "type": msg_type, **payload}))
+        deadline = time.monotonic() + _wait
         while True:
-            reply = json.loads(self._ws.recv())
+            remaining = deadline - time.monotonic()
+            try:
+                if remaining <= 0:
+                    raise TimeoutError
+                raw = self._ws.recv(timeout=remaining)
+            except TimeoutError:
+                raise HaError("timeout", f"no reply to {msg_type} within {_wait:g}s") from None
+            reply = json.loads(raw)
             if reply.get("id") != msg_id:
                 continue
             if reply.get("success"):
@@ -78,11 +90,22 @@ class HaClient:
             err = reply.get("error") or {}
             raise HaError(str(err.get("code", "unknown")), str(err.get("message", "")))
 
-    def supervisor(self, endpoint: str, method: str = "get", data: dict | None = None) -> Any:
+    def supervisor(
+        self,
+        endpoint: str,
+        method: str = "get",
+        data: dict | None = None,
+        timeout: Any = _UNSET,
+        wait: float = READ_WAIT,
+    ) -> Any:
+        """`timeout` is HA's own limit for the Supervisor call (omitted = HA default ~10 s, None =
+        no limit); `wait` is how long we wait for HA's reply."""
         payload: dict[str, Any] = {"endpoint": endpoint, "method": method}
         if data is not None:
             payload["data"] = data
-        return self.call("supervisor/api", **payload)
+        if timeout is not _UNSET:
+            payload["timeout"] = timeout
+        return self.call("supervisor/api", _wait=wait, **payload)
 
     def serial_devices(self) -> list[str]:
         info = self.supervisor("/hardware/info")
@@ -95,20 +118,23 @@ class HaClient:
     def addon_info(self, slug: str) -> dict | None:
         try:
             return self.supervisor(f"/addons/{slug}/info")
-        except HaError:
-            return None
+        except HaError as e:
+            # Supervisor: code unknown_error, message "App <slug> does not exist" (verified live).
+            if e.code == "unknown_error" and "does not exist" in e.message:
+                return None
+            raise
 
     def install_addon(self, slug: str) -> Any:
-        return self.supervisor(f"/store/addons/{slug}/install", "post")
+        return self.supervisor(f"/store/addons/{slug}/install", "post", timeout=None, wait=WRITE_WAIT)
 
     def set_addon_options(self, slug: str, options: dict) -> Any:
-        return self.supervisor(f"/addons/{slug}/options", "post", {"options": options})
+        return self.supervisor(f"/addons/{slug}/options", "post", {"options": options}, timeout=None, wait=WRITE_WAIT)
 
     def start_addon(self, slug: str) -> Any:
-        return self.supervisor(f"/addons/{slug}/start", "post")
+        return self.supervisor(f"/addons/{slug}/start", "post", timeout=None, wait=WRITE_WAIT)
 
     def restart_addon(self, slug: str) -> Any:
-        return self.supervisor(f"/addons/{slug}/restart", "post")
+        return self.supervisor(f"/addons/{slug}/restart", "post", timeout=None, wait=WRITE_WAIT)
 
     def discovery_flows(self, handler: str) -> list[dict]:
         flows = self.call("config_entries/flow/progress")
