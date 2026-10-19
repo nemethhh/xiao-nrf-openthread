@@ -65,7 +65,7 @@ Measured facts about the boards and links. Newest entries at the bottom of each 
   for the Adafruit bootloader), flash 16% / RAM 22%.
 - Sniffer firmware USB identity (from its `prj.conf`): VID `1915`, PID `154b`, manufacturer "Nordic Semiconductor ASA",
   product "nRF 802154 Sniffer", serial = HWINFO device id (same `B46C2A1C09259A32`). Expected port after flashing:
-  `/dev/serial/by-id/usb-Nordic_Semiconductor_ASA_nRF_802154_Sniffer_B46C2A1C09259A32-if00` (in `BOARDS["xiao52"]`; this was a prediction, now superseded: verified after flashing, see below).
+  `/dev/serial/by-id/usb-Nordic_Semiconductor_ASA_nRF_802154_Sniffer_B46C2A1C09259A32-if00` (was `BOARDS["xiao52"]`, now `fw.XIAO52_SNIFFER_PORT`; this was a prediction, verified after flashing, see below).
 - A 1200-baud open/close of the CDC ACM port did NOT enter the UF2 bootloader (the running app ignores it); the UF2 drive needs a double-tap of reset.
 - Extcap (`nrf802154_sniffer.py` copied to `~/.local/lib/wireshark/extcap/`) runs on system python3 with system pyserial 3.5 (no venv needed);
   it matches the device by VID/PID 1915:154b. `--extcap-interfaces` works but lists no interface until the sniffer is flashed.
@@ -142,3 +142,43 @@ Measured facts about the boards and links. Newest entries at the bottom of each 
 - `pytest -m "ha and hw" tests/ha/test_end_to_end.py -v`: test_dk_joins_ha_network, test_dk_has_omr_address,
   test_dk_pings_lan_ipv4_via_nat64 PASSED (45 s); test_dk_reattaches_after_addon_restart SKIPPED (needs HA_ALLOW_RESTART=1).
 - Sniffer verified separately (see commit b070e30). Restart checks remain: `HA_ALLOW_RESTART=1 .venv/bin/pytest -m ha -v` (user runs it).
+
+## XIAO nRF52840 as a Thread router in Home Assistant's network (2026-10-19)
+
+- Firmware `router-xiao52` = `apps/thread-cli` for `xiao_ble` (FTD) with `apps/thread-cli/boards/xiao_ble_nrf52840.conf`:
+  USB device_next CDC ACM console/shell, `CDC_ACM_SERIAL_INITIALIZE_AT_BOOT`, `SHELL_BACKEND_SERIAL_CHECK_DTR` (shell output
+  held until a host asserts DTR; printk drops when the CDC ring is full, nothing blocks), no `CONFIG_LOG`. Flash 495040 B of
+  788 KB (61%), RAM 101496 B of 256 KB (39%). UF2 990208 B at 0x27000 (Adafruit bootloader 0.6.1, S140 7.3.0, board ID
+  `Seeed_XIAO_nRF52840_Sense`, drive label `XIAO-SENSE`).
+- USB identity 2fe3:0004 (Zephyr default VID/PID), manufacturer "Seeed Studio", product "XIAO nRF52840 Thread Router",
+  serial `B46C2A1C09259A32`: **by-id `/dev/serial/by-id/usb-Seeed_Studio_XIAO_nRF52840_Thread_Router_B46C2A1C09259A32-if00`**
+  (`BOARDS["xiao52"]`; the sniffer's port is kept as `fw.XIAO52_SNIFFER_PORT`).
+- Settings: `CONFIG_SETTINGS_ZMS` on `storage_partition` = `partition@ec000`, `reg = <0xec000 0x8000>` (32 KiB, 8 x 4 KiB
+  sectors, `SETTINGS_ZMS_SECTOR_SIZE_MULT=1`) from `nrf52840_partition_uf2_sdv7.dtsi`, between the app and the UF2
+  bootloader at 0xf4000. ZMS works on the nRF52840's page-erase flash; the stored network survives `ot reset` (tested).
+- Shell RX over USB: the default 64-byte `SHELL_BACKEND_SERIAL_RX_RING_BUFFER_SIZE` dropped everything after 64 characters of
+  a pasted line (a 236-character `ot extpanid ...` echoed only 64; `ot dataset set active <tlv>` got neither Done nor an
+  error). 512 bytes fixes it (whole line echoed, `Error 7: InvalidArgs` as expected).
+- Opening the port releases the output held back until DTR (boot banner, prompt); the host tty echoes it into the shell
+  before pyserial switches to raw mode, so the first command arrives as `*** Booting nRF .ot state` ->
+  `***: command not found`. `OtCli` sends an empty line on every (re)open.
+- A reset re-enumerates USB (the tty disappears): `OtCli` reopens the port (`PortLost`, a TimeoutError, then reopen).
+- UF2 entry without a double-tap: `devmem 0x4000051c 32 0x57` (POWER GPREGRET = the Adafruit bootloader's UF2 magic) then
+  `devmem 0xe000ed0c 32 0x5fa0004` (SCB AIRCR SYSRESETREQ) -> drive `XIAO-SENSE` appears, `tools.fw flash` mounts it and
+  copies the image (verified twice). The first try without the read-back failed: the GPREGRET write was the swallowed
+  first line. The UF2 drive vanishes as soon as the image is written: `shutil.copy`'s chmod then raised FileNotFoundError
+  (the flash itself had worked); `shutil.copyfile` is used now.
+- `tests/ha/test_xiao52_router.py` (ha + hw), runs: 5/5, 4/5 (see the ping note below), then
+  5/5 and 5/5 back to back after the fixture change:
+  joins `ha-thread-a98e` (networkname and extpanid match, as child within seconds), becomes router in 14-45 s with
+  4-6 router-table rows (OTBR 0x2400 with LQ 3/3, itself, stale IDs of earlier test runs), back as child 2-3 s after
+  `ot reset` with no commands (same network, same mleid, port re-enumerated), DK joins HA's network and pings the
+  nRF52840's mleid 10/10, and with the nRF52840's port closed after a reset (no host reading, DTR low) the DK reaches its
+  mleid at the first try, 10 s after the reset.
+  One earlier run pinged 7/10 while the nRF52840 was still a child about to upgrade to router (its RLOC16 changes); the DK
+  tests now start once it is a router.
+- `tests/ha/test_end_to_end.py` (DK via HA, OMR, NAT64) still 3/3 with the OtCli changes (restart test skipped).
+- Provisioned permanently with `python -m tools.ha_join xiao52 --router`: router on `ha-thread-a98e`, channel 15, rloc16
+  0xd000. After a further `ot reset` it was a router again within 2 s. The DK was left factory-reset (`disabled` after an
+  SWD reset).
+- Power loss on a USB charger (no host at all): PENDING, `docs/checklist.md`, "XIAO nRF52840 router: power loss on a USB charger".

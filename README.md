@@ -1,13 +1,14 @@
-# nrf54l15-thread-router
+# xiao-nrf-openthread
 
-Firmware and tooling that turn a Seeed XIAO nRF54L15 into a Thread router and, in the end
-state, the RCP radio of Home Assistant's OpenThread Border Router add-on.
+Firmware and tooling for Seeed XIAO nRF boards on OpenThread with Home Assistant: a XIAO nRF54L15 is the RCP
+radio of Home Assistant's OpenThread Border Router add-on, and a XIAO nRF52840 is a permanent Thread router
+in that network, extending the mesh from any USB charger. (The repo was called `nrf54l15-thread-router`.)
 
 | Board | Role |
 | --- | --- |
-| Seeed XIAO nRF54L15 | standalone Thread router (CLI), then HA border router radio (RCP) |
+| Seeed XIAO nRF54L15 | HA border router radio (RCP); earlier a standalone Thread router (CLI) |
+| Seeed XIAO nRF52840 | permanent Thread router in HA's network (`router-xiao52`); re-flashable as 802.15.4 sniffer or fallback RCP |
 | Nordic nRF54L15 DK | second Thread node for tests |
-| Seeed XIAO nRF52840 | 802.15.4 sniffer; fallback RCP over native USB |
 
 ## Setup (Arch / CachyOS)
 
@@ -42,8 +43,14 @@ toolchain with `ZEPHYR_BASE=~/ncs/<version>/zephyr` set (`tools/fw.py` does this
 | `router-xiao54` | XIAO nRF54L15 | Thread router CLI (`apps/thread-cli`) | SWD flash via OpenOCD (CMSIS-DAP) |
 | `node-dk` | nRF54L15 DK | Thread test node CLI | J-Link: `OPENOCD_INTERFACE=jlink` is set by `tools/fw.py` |
 | `rcp-xiao54` | XIAO nRF54L15 | OpenThread RCP at 460800 baud (`apps/rcp`) | the border-router radio; the image HA uses |
-| `sniffer-xiao52` | XIAO nRF52840 | 802.15.4 sniffer | UF2 flash after reset double-tap |
+| `router-xiao52` | XIAO nRF52840 | Thread router CLI (`apps/thread-cli`), shell on native USB | UF2; see "XIAO nRF52840 Thread router" |
+| `sniffer-xiao52` | XIAO nRF52840 | 802.15.4 sniffer | UF2 |
 | `rcp-xiao52` | XIAO nRF52840 | fallback RCP over USB CDC ACM | UF2; untested on hardware |
+
+UF2 flashing (XIAO nRF52840): `python -m tools.fw flash <target>` copies the image to the bootloader's drive (label
+`XIAO-SENSE`, mounted with `udisksctl` if needed). While the board runs `router-xiao52`, the tool gets there by itself:
+it writes the Adafruit bootloader's UF2 magic (`GPREGRET = 0x57`) through the shell's `devmem` and resets. Under any
+other firmware (sniffer, RCP) double-tap the reset button first.
 
 Flashing keeps the settings partition (a stored Thread network survives). `python -m tools.fw flash <target> --erase-settings`
 also fills the settings partition with 0xff and reads it back first (SWD targets only; verified on the DK: the node comes back
@@ -58,6 +65,7 @@ Test tiers:
 .venv/bin/pytest -m soak -v                # long RCP reliability soak
 .venv/bin/pytest -m "ha and not hw" -v     # Home Assistant stage (read-only; skips until the XIAO is on the HA host)
 HA_ALLOW_RESTART=1 .venv/bin/pytest -m "ha and hw" tests/ha/test_end_to_end.py -v   # end-to-end, flashes the DK
+.venv/bin/pytest -m "ha and hw" tests/ha/test_xiao52_router.py -v   # nRF52840 router in HA's network (+ DK); re-provision after
 ```
 
 `-m hw` router tests need the XIAO on this PC, so they are not rerun once it lives on Home Assistant.
@@ -76,14 +84,44 @@ skip while the XIAO is not on the HA host. Step-by-step: `docs/checklist.md`, "M
 
 Fallback if the nRF54L15 RCP proves unreliable on HA: build and flash `rcp-xiao52` (USB CDC ACM) on the XIAO nRF52840.
 
+## XIAO nRF52840 Thread router
+
+The XIAO nRF52840 runs the same `apps/thread-cli` firmware as the nRF54L15 boards (FTD, OpenThread CLI in the Zephyr
+shell). Its board file `apps/thread-cli/boards/xiao_ble_nrf52840.conf` puts the shell on the native USB port (CDC ACM)
+and makes it headless: USB comes up by itself, OpenThread starts from `main()` when a dataset is stored, and the shell
+holds its output until a host opens the port (DTR) instead of blocking. Thread settings live in ZMS on the 32 KiB
+`storage_partition` at 0xec000 (internal flash, below the UF2 bootloader), so the network survives resets (tested)
+and power loss (on flash, like a reset; the charger unplug check is in `docs/checklist.md`).
+
+```sh
+python -m tools.fw build router-xiao52
+python -m tools.fw flash router-xiao52      # from the sniffer: double-tap reset first; from the router: automatic
+#   port: /dev/serial/by-id/usb-Seeed_Studio_XIAO_nRF52840_Thread_Router_B46C2A1C09259A32-if00 (BOARDS["xiao52"])
+python -m tools.ha_join xiao52 --dry-run    # what it would do
+python -m tools.ha_join xiao52 --router     # join HA's preferred network and wait until it is a router
+```
+
+`tools/ha_join.py` reads Home Assistant's preferred Thread dataset (read-only: `thread/list_datasets`,
+`thread/get_dataset_tlv`) and writes it into the board over its shell (`ot dataset set active <tlv>`, `ot ifconfig up`,
+`ot thread start`, after `ot thread stop` if the board is on another network); a board already on the network is left
+alone. It prints the plan first and never prints the TLV (it holds the network key). Any board in `fw.BOARDS` running
+thread-cli works (the DK too). After that the board needs no host: plug it into any USB charger and it rejoins as a
+router by itself. `tests/ha/test_xiao52_router.py` factory-resets the board before and after each test, so run
+`python -m tools.ha_join xiao52 --router` again afterwards.
+
+Back to the sniffer: `python -m tools.fw build sniffer-xiao52 && python -m tools.fw flash sniffer-xiao52` (automatic
+bootloader entry from the router firmware); the port becomes `fw.XIAO52_SNIFFER_PORT`. The board then leaves HA's
+mesh. Back to the router: double-tap reset, `python -m tools.fw flash router-xiao52`, then `ha_join` again.
+
 ## Sniffing
 
-The XIAO nRF52840 runs NCS's `802154_sniffer` sample and shows up in Wireshark through Nordic's extcap.
+The XIAO nRF52840 is now a Thread router (see above); to sniff, re-flash it with `sniffer-xiao52`. Then it runs
+NCS's `802154_sniffer` sample and shows up in Wireshark through Nordic's extcap.
 
 ```sh
 # 1. Build (no overlay needed; xiao_ble already has a CDC ACM console) and flash.
 python -m tools.fw build sniffer-xiao52
-#    Double-tap the reset button so the UF2 drive (XIAO...) mounts under /run/media/$USER/, then:
+#    From the router firmware the flash enters the bootloader by itself; otherwise double-tap reset first.
 python -m tools.fw flash sniffer-xiao52
 #    The board re-enumerates as 1915:154b "nRF 802154 Sniffer" (by-id ...Nordic_Semiconductor_ASA_nRF_802154_Sniffer_...-if00).
 

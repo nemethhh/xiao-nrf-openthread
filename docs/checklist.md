@@ -17,9 +17,25 @@ Status: PENDING (needs a physical USB unplug). Applies only if the XIAO is refla
 
 The reset variant of this (SWD reset instead of power loss) is automated and passes.
 
+## XIAO nRF52840 router: power loss on a USB charger
+
+Status: PENDING (needs a physical unplug). The board runs `router-xiao52` and is provisioned into HA's network
+(`python -m tools.ha_join xiao52 --router`); reset and headless rejoin are automated and pass
+(`tests/ha/test_xiao52_router.py`, see `docs/hardware-notes.md`, "XIAO nRF52840 as a Thread router").
+
+1. Unplug the XIAO nRF52840 from this PC and plug it into a USB charger (no host at all) for at least 3 minutes.
+2. Plug it back into this PC. Within a few seconds: `.venv/bin/python -m tools.ha_join xiao52 --dry-run` must say
+   "already on 'ha-thread-a98e': no dataset written" with state `router` (or `child` right after the replug: the USB
+   power drops for a moment).
+3. Optional, while it is still on the charger: join the DK (`.venv/bin/python -m tools.ha_join dk`), ping the
+   nRF52840's mleid (printed by `ha_join`) with `ot ping <mleid>` on the DK shell, then `ot factoryreset` the DK.
+4. Record pass/fail and the date in `docs/hardware-notes.md`.
+
 ## Sniffer
 
 Status: DONE 2026-10-19 (flashed, extcap installed, live capture verified on channel 14: 3 frames with the DK's PAN ID).
+Since superseded: the XIAO nRF52840 is now the Thread router (`router-xiao52`). To sniff again, re-flash
+`sniffer-xiao52` (README, "XIAO nRF52840 Thread router"); the port is then `fw.XIAO52_SNIFFER_PORT`.
 
 The XIAO nRF52840 (`2886:802f`, serial `B46C2A1C09259A32`) is on USB running an unknown Zephyr app. A 1200-baud
 "touch" does not enter its bootloader, and there is no SWD probe.
@@ -28,7 +44,7 @@ The XIAO nRF52840 (`2886:802f`, serial `B46C2A1C09259A32`) is on USB running an 
 2. (done) Double-tap the XIAO nRF52840's reset button; the UF2 drive mounts (`/run/media/$USER/XIAO*`; `udisksctl mount -b <dev>` if not).
 3. DONE 2026-10-19: `python -m tools.fw flash sniffer-xiao52`; the board re-enumerates as `1915:154b` "nRF 802154 Sniffer".
    Confirm `ls /dev/serial/by-id/` shows `usb-Nordic_Semiconductor_ASA_nRF_802154_Sniffer_B46C2A1C09259A32-if00`
-   (the path in `BOARDS["xiao52"]`); verified, it matched.
+   (then in `BOARDS["xiao52"]`, now `fw.XIAO52_SNIFFER_PORT`); verified, it matched.
 4. The user is already in group `wireshark`; a re-login activates it (until then use `printf 'cmd\n' | newgrp wireshark`). `tshark -D` lists `/dev/ttyACM0 (nRF Sniffer for 802.15.4)`.
 5. DONE with the DK alone as leader (the XIAO runs RCP firmware): `ot channel` / `ot panid`, then the capture from README "Sniffing".
    Pass: `tshark -r build/capture.pcapng | wc -l` > 0 with the network's PAN ID.
@@ -38,8 +54,10 @@ The XIAO nRF52840 (`2886:802f`, serial `B46C2A1C09259A32`) is on USB running an 
 
 Status: PENDING, only needed if the XIAO nRF54L15 RCP proves unreliable on Home Assistant (the local soak at 460800 passed).
 
-`python -m tools.fw build rcp-xiao52` builds (`build/rcp-xiao52/rcp/zephyr/zephyr.uf2`, Spinel over USB CDC ACM). Flashing needs a double-tap of
-reset on the XIAO nRF52840, then `python -m tools.fw flash rcp-xiao52`. Untested on hardware.
+`python -m tools.fw build rcp-xiao52` builds (`build/rcp-xiao52/rcp/zephyr/zephyr.uf2`, Spinel over USB CDC ACM).
+`python -m tools.fw flash rcp-xiao52` enters the bootloader by itself while the board runs `router-xiao52` (otherwise
+double-tap reset first). Untested on hardware. The XIAO nRF52840 is the HA mesh's second router now; using it as the
+RCP means giving that up.
 
 ## Antenna fix: reflash XIAO RCP
 
