@@ -366,3 +366,26 @@ def test_find_xiao_cli(monkeypatch, capsys):
     assert ha_mod.main(["find-xiao"]) == 1
     monkeypatch.setattr(ha_mod, "HaClient", lambda: Fake(["/dev/serial/by-id/usb-A", new, new + "2"]))
     assert ha_mod.main(["find-xiao"]) == 1
+
+
+def test_secret_hides_value_in_repr_but_not_in_str():
+    """pytest prints every frame's arguments with repr() in a failure traceback; a TLV passed as an argument
+    leaked the network key that way (seen live). Secret keeps repr() redacted, also after concatenation."""
+    from tools.ha import Secret
+
+    s = Secret("0e08deadbeef")
+    assert "deadbeef" not in repr(s) and "deadbeef" not in repr([s])
+    assert str(s) == "0e08deadbeef" and f"x {s}" == "x 0e08deadbeef"
+    cmd = "dataset set active " + s
+    assert isinstance(cmd, Secret) and "deadbeef" not in repr(cmd)
+    assert cmd == "dataset set active 0e08deadbeef"
+    assert isinstance(s + " tail", Secret)
+
+
+def test_thread_dataset_tlv_is_a_secret(make_ha):
+    from tools.ha import Secret
+
+    fake, client = make_ha(lambda m: {"success": True, "result": {"tlv": "0e08cafe"}})
+    with client:
+        tlv = client.thread_dataset_tlv("d1")
+    assert isinstance(tlv, Secret) and "cafe" not in repr(tlv)

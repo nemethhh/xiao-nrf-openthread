@@ -183,15 +183,98 @@ def test_flash_uf2_tolerates_drive_vanishing_after_copy(tmp_path, monkeypatch):
     assert (drive / "zephyr.uf2").read_bytes() == image.read_bytes()
 
 
-def test_flash_uf2_without_drive_exits_with_hint(tmp_path, monkeypatch):
-    monkeypatch.setattr(fw, "MEDIA_ROOT", tmp_path / "media")
-    with pytest.raises(SystemExit, match="Double-tap"):
-        fw.flash(TARGETS["router-xiao52"])
-
-
 def test_xiao52_board_is_the_router_port_and_sniffer_port_is_kept():
     assert BOARDS["xiao52"].serial_port == (
         "/dev/serial/by-id/usb-Seeed_Studio_XIAO_nRF52840_Thread_Router_B46C2A1C09259A32-if00"
     )
     assert BOARDS["xiao52"].probe == "uf2"
     assert fw.XIAO52_SNIFFER_PORT.endswith("usb-Nordic_Semiconductor_ASA_nRF_802154_Sniffer_B46C2A1C09259A32-if00")
+
+
+def test_uf2_bootloader_commands_set_gpregret_magic_then_reset():
+    # Adafruit nRF52 bootloader: GPREGRET (POWER 0x4000051C) = 0x57 on reset -> UF2 drive. The reset goes through
+    # SCB AIRCR SYSRESETREQ, not sys_reboot (which may rewrite GPREGRET).
+    assert fw.uf2_bootloader_commands() == ["devmem 0x4000051c 32 0x57", "devmem 0xe000ed0c 32 0x5fa0004"]
+
+
+def uf2_env(tmp_path, monkeypatch, *, port_exists=True, drive_after=0):
+    """Fake board port, lsblk/udisksctl and the XIAO drive that appears after `drive_after` polls."""
+    monkeypatch.setattr(fw, "REPO", tmp_path)
+    monkeypatch.setattr(fw, "MEDIA_ROOT", tmp_path / "media")
+    monkeypatch.setattr(fw.time, "sleep", lambda s: None)
+    image = tmp_path / "build/router-xiao52/thread-cli/zephyr/zephyr.uf2"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"UF2")
+    port = tmp_path / "ttyACM0"
+    if port_exists:
+        port.write_text("")
+    monkeypatch.setitem(fw.BOARDS, "xiao52", fw.Board("xiao52", str(port), "uf2", None))
+    log = {"written": [], "mounted": [], "polls": 0}
+
+    class FakeSerial:
+        def __init__(self, *a, **kw):
+            pass
+
+        rx = b""
+
+        def write(self, data):
+            line = data.decode().strip()
+            if line:
+                log["written"].append(line)
+            if line == "devmem 0x4000051c":  # read-back of GPREGRET after the write
+                self.rx += b"devmem 0x4000051c\r\nUsing data width 32\r\nRead value 0x57\r\n"
+
+        def read(self, n=1):
+            out, self.rx = self.rx[:n], self.rx[n:]
+            return out
+
+        def reset_input_buffer(self):
+            self.rx = b""
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+    import serial
+
+    monkeypatch.setattr(serial, "Serial", FakeSerial)
+
+    def fake_block_device():
+        log["polls"] += 1
+        return "/dev/sdd" if log["polls"] > drive_after else None
+
+    def fake_run(argv, **kw):
+        assert argv[:3] == ["udisksctl", "mount", "-b"]
+        log["mounted"].append(argv[3])
+        (tmp_path / "media/XIAO-SENSE").mkdir(parents=True, exist_ok=True)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(fw, "_uf2_block_device", fake_block_device)
+    monkeypatch.setattr(fw.subprocess, "run", fake_run)
+    return log, tmp_path / "media/XIAO-SENSE/zephyr.uf2"
+
+
+def test_flash_uf2_enters_bootloader_through_running_shell_and_mounts(tmp_path, monkeypatch):
+    log, copied = uf2_env(tmp_path, monkeypatch, drive_after=2)
+    fw.flash(TARGETS["router-xiao52"])
+    set_magic, reset = fw.uf2_bootloader_commands()
+    # The first line after opening the port can be swallowed by the shell's buffered boot output (seen live),
+    # so the magic is read back before the reset.
+    assert log["written"] == [set_magic, "devmem 0x4000051c", reset]
+    assert log["mounted"] == ["/dev/sdd"]
+    assert copied.read_bytes() == b"UF2"
+
+
+def test_flash_uf2_mounts_double_tapped_drive_without_touching_port(tmp_path, monkeypatch):
+    log, copied = uf2_env(tmp_path, monkeypatch, port_exists=False)
+    fw.flash(TARGETS["router-xiao52"])
+    assert log["written"] == []
+    assert copied.exists()
+
+
+def test_flash_uf2_gives_up_with_double_tap_hint(tmp_path, monkeypatch):
+    log, _ = uf2_env(tmp_path, monkeypatch, port_exists=False, drive_after=10**9)
+    with pytest.raises(SystemExit, match="Double-tap"):
+        fw.flash(TARGETS["router-xiao52"])

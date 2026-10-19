@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import termios
 import time
 from typing import Callable
 
@@ -16,6 +17,8 @@ LOG_LINE = re.compile(r"^\[\d\d:\d\d:\d\d\.\d{3},\d{3}\] <\w+>")
 ERROR = re.compile(r"^Error (\d+): (.*)$")
 # Commands whose text or output can carry the network key: never echo them in exceptions.
 SECRET_COMMANDS = ("dataset", "networkkey")
+# What pyserial raises on a tty that vanished: SerialException (an OSError) or, from tcflush, termios.error.
+PORT_ERRORS = (OSError, termios.error)
 
 
 class OtError(RuntimeError):
@@ -37,23 +40,37 @@ class OtCli:
         self._port = port
         self._baudrate = baudrate
         self._factory = serial_factory
-        self._ser = serial_factory(port, baudrate=baudrate, timeout=0.05)
+        self._ser = None
         self._buf = ""
+        self._open(serial_factory(port, baudrate=baudrate, timeout=0.05))
+
+    def _open(self, ser) -> None:
+        """On open a board on native USB sends the output it held back until DTR, and the host tty echoes it
+        back before pyserial switches to raw mode: the shell then has junk (`*** Booting nRF ...`) in front of
+        the next command (seen live: `***: command not found`). An empty line flushes it."""
+        self._ser = ser
+        self._buf = ""
+        try:
+            ser.write(b"\r\n")
+            time.sleep(0.3)
+            ser.reset_input_buffer()
+        except PORT_ERRORS as e:
+            raise self._lost(e) from None
 
     def _serial(self):
         if self._ser is None:
             try:
-                self._ser = self._factory(self._port, baudrate=self._baudrate, timeout=0.05)
-            except OSError as e:  # serial.SerialException is an OSError
+                ser = self._factory(self._port, baudrate=self._baudrate, timeout=0.05)
+            except PORT_ERRORS as e:  # serial.SerialException is an OSError
                 time.sleep(0.5)  # the device is still re-enumerating
                 raise PortLost(f"serial port not back yet: {type(e).__name__}") from None
-            self._buf = ""
+            self._open(ser)
         return self._ser
 
-    def _lost(self, e: OSError) -> PortLost:
+    def _lost(self, e: Exception) -> PortLost:
         try:
             self._ser.close()
-        except OSError:
+        except PORT_ERRORS:
             pass
         self._ser = None
         return PortLost(f"serial port lost: {type(e).__name__}")
@@ -62,14 +79,14 @@ class OtCli:
         ser = self._serial()
         try:
             ser.write(data)
-        except OSError as e:
+        except PORT_ERRORS as e:
             raise self._lost(e) from None
 
     def _read_chunk(self) -> bytes:
         ser = self._serial()
         try:
             return ser.read(ser.in_waiting or 1)
-        except OSError as e:
+        except PORT_ERRORS as e:
             raise self._lost(e) from None
 
     def _next_line(self, deadline: float) -> str | None:
@@ -90,11 +107,14 @@ class OtCli:
         ser = self._serial()
         try:
             ser.reset_input_buffer()
-        except OSError as e:
+        except PORT_ERRORS as e:
             raise self._lost(e) from None
         self._buf = ""
         line_sent = f"ot {command}"
-        self._write(f"{line_sent}\r\n".encode())
+        try:  # inline, not self._write(data): a traceback would print that frame's argument, the key for dataset commands
+            ser.write(f"{line_sent}\r\n".encode())
+        except PORT_ERRORS as e:
+            raise self._lost(e) from None
         deadline = time.monotonic() + timeout
         out: list[str] = []
         while (line := self._next_line(deadline)) is not None:

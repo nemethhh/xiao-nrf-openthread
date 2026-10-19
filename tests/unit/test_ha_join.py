@@ -171,3 +171,25 @@ def test_wrong_network_after_start_is_an_error():
 def test_main_rejects_unknown_board(capsys):
     with pytest.raises(SystemExit):
         ha_join.main(["nope"])
+
+
+def test_dataset_command_argument_has_redacted_repr():
+    """The command string is an argument of OtCli.cmd: pytest would print it in a traceback."""
+    from tools.ha import Secret
+
+    class SecretHa(FakeHa):
+        def thread_dataset_tlv(self, dataset_id):
+            return Secret(super().thread_dataset_tlv(dataset_id))
+
+    cli = FakeCli()
+    run(cli, SecretHa())
+    sent = next(c for c in cli.commands if c.startswith("dataset set active"))
+    assert sent == f"dataset set active {TLV}"
+    assert TLV not in repr(sent) and KEY_PART not in repr(sent)
+
+
+def test_unexpected_error_while_sending_dataset_hides_tlv():
+    cli = FakeCli(fail={"dataset": UnicodeError(f"boom {TLV}")})
+    with pytest.raises(RuntimeError) as exc:
+        run(cli)
+    assert TLV not in str(exc.value) and exc.value.__suppress_context__

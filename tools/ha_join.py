@@ -16,7 +16,7 @@ import sys
 
 from tests.otcli import OtCli, OtError
 from tools import fw
-from tools.ha import HaClient, HaError
+from tools.ha import HaClient, HaError, Secret
 
 ATTACHED = {"child", "router", "leader"}
 JOINED = {"child", "router"}  # `leader` on HA's network would mean a partition of its own, not a join
@@ -55,13 +55,17 @@ def on_network(cli, ds: dict) -> tuple[bool, str]:
     return same, state
 
 
-def _set_dataset(cli, tlv: str) -> None:
+def _set_dataset(cli, tlv: Secret) -> None:
+    """The command carries the network key: keep it a Secret (redacted repr, so a traceback that prints
+    OtCli.cmd's arguments does not show it) and report every failure without it or its cause."""
     try:
-        cli.cmd(f"dataset set active {tlv}")
+        cli.cmd("dataset set active " + Secret(tlv))
     except OtError as e:
         raise RuntimeError(f"`ot dataset set active` failed (error code {e.code})") from None
     except TimeoutError:
         raise RuntimeError("`ot dataset set active` timed out") from None
+    except Exception as e:  # noqa: BLE001 - anything else may quote the command
+        raise RuntimeError(f"`ot dataset set active` failed ({type(e).__name__})") from None
 
 
 def run(board: str, ha, cli, *, dry_run: bool = False, router: bool = False, timeout: float = JOIN_TIMEOUT) -> int:

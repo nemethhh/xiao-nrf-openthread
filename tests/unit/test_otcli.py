@@ -277,3 +277,38 @@ def test_port_lost_is_a_timeout_error():
     cli.reboot()
     with pytest.raises(TimeoutError):
         cli.cmd("state", timeout=0.5)
+
+
+def test_dead_port_termios_error_counts_as_port_lost():
+    """pyserial's reset_input_buffer on a vanished tty raises termios.error (not an OSError), seen live."""
+    import termios
+
+    board = UsbBoard(state="child")
+    opened = board.open
+
+    def open_with_tcflush_error(*a, **kw):
+        port = opened(*a, **kw)
+        plain_reset = port.reset_input_buffer
+
+        def reset_input_buffer():
+            if port.dead:
+                raise termios.error(5, "Input/output error")
+            plain_reset()
+
+        port.reset_input_buffer = reset_input_buffer
+        return port
+
+    cli = OtCli("usb", serial_factory=open_with_tcflush_error)
+    cli.reboot()
+    assert cli.wait_state({"child"}, 20, poll_timeout=0.2) == "child"
+
+
+def test_opening_the_port_sends_an_empty_line_first():
+    """On open the board sends output held back until DTR; the host tty echoes it back before pyserial puts the
+    port in raw mode, so the shell sees junk (`*** Booting nRF ...`) in front of the first command (seen live:
+    `***: command not found`). An empty line flushes that junk before any command."""
+    fake = FakeSerial({"ot state": "ot state\r\ndisabled\r\nDone\r\n"})
+    cli = OtCli("fake", serial_factory=lambda *a, **kw: fake)
+    assert fake.written == [""]
+    assert cli.cmd("state") == ["disabled"]
+    assert fake.written == ["", "ot state"]

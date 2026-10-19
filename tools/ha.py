@@ -39,6 +39,23 @@ def find_new_xiao(baseline: list[str], current: list[str]) -> str:
     return new[0]
 
 
+class Secret(str):
+    """A str whose repr() is redacted (e.g. a Thread dataset TLV, which holds the network key).
+
+    pytest prints the arguments of every frame in a failure traceback with repr(), so a plain str TLV passed
+    to a function leaks there. str() and f-strings still give the value; concatenation stays a Secret.
+    """
+
+    def __repr__(self) -> str:
+        return "<secret, redacted>"
+
+    def __add__(self, other: str) -> "Secret":
+        return Secret(str.__add__(self, other))
+
+    def __radd__(self, other: str) -> "Secret":
+        return Secret(str.__add__(other, self))
+
+
 class HaError(RuntimeError):
     def __init__(self, code: str, message: str):
         super().__init__(f"{code}: {message}")
@@ -185,7 +202,7 @@ class HaClient:
         return self.call("thread/list_datasets")["datasets"]
 
     def thread_dataset_tlv(self, dataset_id: str) -> str:
-        return self.call("thread/get_dataset_tlv", dataset_id=dataset_id)["tlv"]
+        return Secret(self.call("thread/get_dataset_tlv", dataset_id=dataset_id)["tlv"])
 
     def set_preferred_dataset(self, dataset_id: str) -> None:
         self.call("thread/set_preferred_dataset", dataset_id=dataset_id)

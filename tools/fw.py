@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -227,17 +228,99 @@ def flash(target: Target, *, erase_settings: bool = False) -> None:
 
 # Where udisks mounts the XIAO nRF52840's UF2 drive (label XIAO-SENSE; `udisksctl mount -b /dev/sdX`).
 MEDIA_ROOT = Path("/run/media", os.environ.get("USER", ""))
+UF2_LABEL_PREFIX = "XIAO"
+UF2_WAIT = 30.0  # seconds for the drive to appear after the bootloader request
+
+# Adafruit nRF52 bootloader: GPREGRET == 0x57 at reset means "stay in UF2 mode" (what a reset double-tap does).
+NRF52_GPREGRET = 0x4000051C  # POWER->GPREGRET
+UF2_MAGIC = 0x57
+SCB_AIRCR = 0xE000ED0C
+AIRCR_SYSRESETREQ = 0x05FA0004  # VECTKEY | SYSRESETREQ
+
+
+def uf2_bootloader_commands() -> list[str]:
+    """Zephyr shell (devmem) lines that reboot a running thread-cli nRF52840 into its UF2 bootloader.
+
+    The reset is a raw SYSRESETREQ, not `kernel reboot`, so nothing rewrites GPREGRET on the way down.
+    """
+    return [f"devmem {NRF52_GPREGRET:#x} 32 {UF2_MAGIC:#x}", f"devmem {SCB_AIRCR:#x} 32 {AIRCR_SYSRESETREQ:#x}"]
+
+
+def _uf2_volume() -> Path | None:
+    volumes = sorted(MEDIA_ROOT.glob(f"{UF2_LABEL_PREFIX}*"))
+    return volumes[0] if volumes else None
+
+
+def _uf2_block_device() -> str | None:
+    out = subprocess.run(["lsblk", "-nrpo", "NAME,LABEL"], capture_output=True, text=True).stdout
+    for line in out.splitlines():
+        name, _, label = line.partition(" ")
+        if label.startswith(UF2_LABEL_PREFIX):
+            return name
+    return None
+
+
+def _enter_uf2_bootloader(board: Board) -> bool:
+    """Ask the firmware on `board` (router-xiao52's shell) to reboot into the UF2 bootloader. False if its
+    port is absent (another firmware, e.g. the sniffer: then only a reset double-tap works)."""
+    if not os.path.exists(board.serial_port):
+        return False
+    import serial
+
+    set_magic, reset = uf2_bootloader_commands()
+    print(f"+ {board.serial_port}: {set_magic}; {reset}", flush=True)
+    try:
+        with serial.Serial(board.serial_port, 115200, timeout=0.5) as port:
+            # Opening the port releases the shell's output held back until DTR; the first line written then
+            # can be swallowed (seen live), so flush with an empty line and read the magic back before resetting.
+            port.write(b"\r\n")
+            time.sleep(1.0)
+            port.reset_input_buffer()
+            for _ in range(3):
+                port.write(f"{set_magic}\r\n".encode())
+                time.sleep(0.5)
+                port.reset_input_buffer()
+                port.write(f"devmem {NRF52_GPREGRET:#x}\r\n".encode())
+                time.sleep(0.5)
+                if f"Read value {UF2_MAGIC:#x}" in port.read(4096).decode(errors="replace"):
+                    break
+            else:
+                print(f"{board.serial_port}: GPREGRET read-back failed; not resetting", flush=True)
+                return False
+            port.write(f"{reset}\r\n".encode())
+            time.sleep(0.5)
+    except OSError:
+        pass  # the port vanishes with the reset
+    return True
+
+
+def _wait_uf2_volume(timeout: float) -> Path | None:
+    """Wait for the UF2 drive, mounting it with udisksctl when it shows up unmounted."""
+    deadline = time.monotonic() + timeout
+    while True:
+        if volume := _uf2_volume():
+            return volume
+        if dev := _uf2_block_device():
+            subprocess.run(["udisksctl", "mount", "-b", dev], capture_output=True, text=True)
+            if volume := _uf2_volume():
+                return volume
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(1)
 
 
 def _flash_uf2(target: Target) -> None:
     uf2 = _image_dir(target) / "zephyr.uf2"
-    volumes = sorted(MEDIA_ROOT.glob("XIAO*"))
-    if not volumes:
-        sys.exit(f"Double-tap reset on the XIAO nRF52840 so its UF2 drive mounts, then rerun. Image: {uf2}")
-    print(f"+ cp {uf2} {volumes[0]}", flush=True)
+    volume = _uf2_volume()
+    if volume is None:
+        entered = _enter_uf2_bootloader(BOARDS[target.board])
+        volume = _wait_uf2_volume(UF2_WAIT if entered else 5.0)
+    if volume is None:
+        sys.exit(f"Double-tap reset on the XIAO nRF52840 so its UF2 drive appears, then rerun. Image: {uf2}")
+    print(f"+ cp {uf2} {volume}", flush=True)
     # Data only: the bootloader flashes and reboots once the image is written, so the drive is gone
     # before shutil.copy could set permissions on the copy (FileNotFoundError seen live).
-    shutil.copyfile(uf2, volumes[0] / uf2.name)
+    shutil.copyfile(uf2, volume / uf2.name)
 
 
 def reset(board: Board) -> None:
