@@ -55,6 +55,17 @@ Measured facts about the boards and links. Newest entries at the bottom of each 
   it matches the device by VID/PID 1915:154b. `--extcap-interfaces` works but lists no interface until the sniffer is flashed.
 - `tshark -D` fails here with "Couldn't run dumpcap: Permission denied": `/usr/bin/dumpcap` is `root:wireshark 0750` and the user is not in group `wireshark`.
 
+### Sniffer flashed and verified (2026-10-19, later)
+
+- After the UF2 flash the board enumerates as `1915:154b` at exactly the predicted
+  `/dev/serial/by-id/usb-Nordic_Semiconductor_ASA_nRF_802154_Sniffer_B46C2A1C09259A32-if00` (-> `/dev/ttyACM0`).
+- `tshark -D` lists `/dev/ttyACM0 (nRF Sniffer for 802.15.4)` (run with group wireshark via newgrp; `sg` is not installed).
+- Capture: DK alone as leader (channel 14, PAN `0xa667`), `tshark -i /dev/ttyACM0 -o extcap._dev_ttyacm0.channel:14 -a duration:40 -w build/capture.pcapng`
+  -> 3 frames, all MLE advertisements (broadcast, ~10 s and ~13 s apart) with dst PAN 0xa667. The same command on channel 20 captured
+  7 frames from another network (PAN 0xdb82, none with 0xa667), so the channel pref takes effect.
+- Pref key: `extcap.<sanitized if>.channel` (`_dev_ttyacm0`); `extcap./dev/ttyACM0.channel` and `extcap.nrf802154_sniffer.channel` are unknown prefs.
+- Decryption not tested. DK was factory-reset afterwards.
+
 ## XIAO nRF54L15 as RCP against an isolated local OTBR (2026-10-19)
 
 - Firmware `apps/rcp` (NCS `openthread/coprocessor` sample): Spinel/HDLC on `uart20` (P1.8/P1.9, the SAMD11 bridge), no flow control,

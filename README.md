@@ -86,19 +86,25 @@ cp docs/reference/nrf-sniffer-802154/nrf802154_sniffer/nrf802154_sniffer.py ~/.l
 chmod +x ~/.local/lib/wireshark/extcap/nrf802154_sniffer.py
 #    tshark/wireshark need dumpcap access: sudo usermod -aG wireshark $USER, then log in again.
 
-# 3. Capture 30 s on the network's channel (ask the router: `ot channel`, `ot panid`).
-IF=$(tshark -D | awk '/nRF Sniffer for 802.15.4/ {print $2}')    # e.g. /dev/ttyACM0-None
-tshark -i "$IF" -o "extcap.$IF.channel:15" -a duration:30 -w build/capture.pcapng
-tshark -r build/capture.pcapng | wc -l                           # > 0, PAN ID matches `ot panid`
+# 3. Capture 40 s on the network's channel (ask a node: `ot channel`, `ot panid`).
+#    The interface name is the tty itself (`tshark -D` shows "/dev/ttyACM0 (nRF Sniffer for 802.15.4)"; the number can change).
+#    The channel is the extcap pref `extcap.<sanitized if>.channel`: the interface name lowercased with non-alphanumerics
+#    turned into "_", so /dev/ttyACM0 -> `_dev_ttyacm0`. (`extcap./dev/ttyACM0.channel` and `extcap.nrf802154_sniffer.channel`
+#    are rejected as unknown preferences; `--channel` is not a tshark option.)
+tshark -i /dev/ttyACM0 -o extcap._dev_ttyacm0.channel:14 -a duration:40 -w build/capture.pcapng
+tshark -r build/capture.pcapng -Y 'wpan.dst_pan == 0xa667'       # PAN ID from `ot panid`; MLE advertisements show up
 ```
 
-Without dumpcap access the extcap can write a FIFO directly:
-`mkfifo /tmp/f; ~/.local/lib/wireshark/extcap/nrf802154_sniffer.py --capture --extcap-interface <tty> --fifo /tmp/f --channel 15 &`
+dumpcap needs group `wireshark` (`sudo usermod -aG wireshark $USER`, then log in again; until then
+`printf '<command>\n' | newgrp wireshark` runs it with the group; `sg` may not be installed).
+List the pref keys with `tshark -G currentprefs | grep extcap`.
+
+Without dumpcap access the extcap can write a FIFO directly (untested):
+`mkfifo /tmp/f; ~/.local/lib/wireshark/extcap/nrf802154_sniffer.py --capture --extcap-interface /dev/ttyACM0 --fifo /tmp/f --channel 14 &`
 and `wireshark -k -i /tmp/f` (or `tshark -i /tmp/f`).
 
-To decrypt Thread traffic, give Wireshark the network key (`ot networkkey` on a node) under
-Preferences > Protocols > Thread > "Thread Network Key" (it derives the MLE/MAC keys itself; set the
-sequence counter if prompted), or add it under Protocols > IEEE 802.15.4 > Decryption Keys.
-Frames are still readable without the key (PAN ID, addresses, MLE structure).
+Decryption (UNTESTED, written from memory of Wireshark's prefs): give Wireshark the network key (`ot networkkey` on a node)
+under Preferences > Protocols > Thread > "Thread Network Key", or under Protocols > IEEE 802.15.4 > Decryption Keys.
+Frames are readable without the key (PAN ID, addresses, MLE structure).
 
 `rcp-xiao52` is the fallback RCP over USB CDC if the XIAO nRF54L15 RCP misbehaves on Home Assistant.

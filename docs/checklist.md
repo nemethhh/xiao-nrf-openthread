@@ -19,21 +19,20 @@ The reset variant of this (SWD reset instead of power loss) is automated and pas
 
 ## Sniffer
 
-Status: PENDING (flashing needs a physical double-tap of reset; the live capture depends on it).
+Status: DONE 2026-10-19 (flashed, extcap installed, live capture verified on channel 14: 3 frames with the DK's PAN ID).
 
 The XIAO nRF52840 (`2886:802f`, serial `B46C2A1C09259A32`) is on USB running an unknown Zephyr app. A 1200-baud
 "touch" does not enter its bootloader, and there is no SWD probe.
 
 1. `python -m tools.fw build sniffer-xiao52`
-2. Double-tap the XIAO nRF52840's reset button; the UF2 drive mounts (`/run/media/$USER/XIAO*`; `udisksctl mount -b <dev>` if not).
-3. `python -m tools.fw flash sniffer-xiao52`; the board re-enumerates as `1915:154b` "nRF 802154 Sniffer".
+2. (done) Double-tap the XIAO nRF52840's reset button; the UF2 drive mounts (`/run/media/$USER/XIAO*`; `udisksctl mount -b <dev>` if not).
+3. DONE 2026-10-19: `python -m tools.fw flash sniffer-xiao52`; the board re-enumerates as `1915:154b` "nRF 802154 Sniffer".
    Confirm `ls /dev/serial/by-id/` shows `usb-Nordic_Semiconductor_ASA_nRF_802154_Sniffer_B46C2A1C09259A32-if00`
-   (the path in `BOARDS["xiao52"]`); fix it if it differs.
-4. `sudo usermod -aG wireshark $USER` (dumpcap is `root:wireshark 0750`), log in again; `tshark -D` should list the nRF Sniffer.
-5. Form a network on the XIAO nRF54L15 and join the DK (`pytest -m hw tests/hw/test_two_node.py` leaves them up, or use `form_network`),
-   read `ot channel` / `ot panid`, then run the capture from README "Sniffing".
+   (the path in `BOARDS["xiao52"]`); verified, it matched.
+4. The user is already in group `wireshark`; a re-login activates it (until then use `printf 'cmd\n' | newgrp wireshark`). `tshark -D` lists `/dev/ttyACM0 (nRF Sniffer for 802.15.4)`.
+5. DONE with the DK alone as leader (the XIAO runs RCP firmware): `ot channel` / `ot panid`, then the capture from README "Sniffing".
    Pass: `tshark -r build/capture.pcapng | wc -l` > 0 with the network's PAN ID.
-6. Record the result in `docs/hardware-notes.md`.
+6. DONE: result recorded in `docs/hardware-notes.md`.
 
 ## nRF52840 fallback RCP (optional)
 
